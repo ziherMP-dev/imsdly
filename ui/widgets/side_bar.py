@@ -30,7 +30,7 @@ class SideBar(QFrame):
         # Define buttons
         buttons = [
             ("SD Card", self.parent.handle_sd_card, "SP_DriveHDIcon"),
-            ("Import Files", self.parent.handle_import_files, "SP_DialogOpenButton"),
+            ("Import Settings", self.parent.handle_import_settings, "SP_ArrowRight"),
             ("Browse Files", self.parent.handle_browse_files, "SP_FileDialogContentsView"),
         ]
         
