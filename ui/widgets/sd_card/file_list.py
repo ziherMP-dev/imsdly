@@ -1,11 +1,38 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QHBoxLayout, QSizePolicy, QStyle, QAbstractItemView
+    QHBoxLayout, QSizePolicy, QStyle, QAbstractItemView, QFrame, QToolTip
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint, QByteArray
-from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter, QPolygon, QLinearGradient, QImage
-from typing import Dict, Optional, List
+from PyQt6.QtCore import (
+    Qt, pyqtSignal, QSize, QPoint, QByteArray, QFileInfo, QDateTime,
+    QThread, QRunnable, QThreadPool, QObject, pyqtSlot, QEvent, QTimer, QRect
+)
+from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter, QPolygon, QLinearGradient, QImage, QPen, QBrush
+from typing import Dict, Optional, List, Callable, Set
 import os
+import hashlib
+import json
+import shutil
+from datetime import datetime
+import logging
+import time
+from queue import Queue, Empty
+from threading import Thread
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('FileList')
+
+# Global thumbnail cache (memory)
+THUMBNAIL_CACHE = {}
+
+# Disk-based cache settings
+CACHE_DIR = os.path.join(os.path.expanduser('~'), '.imsdly', 'thumbnail_cache')
+MAX_CACHE_SIZE_MB = 500  # Maximum cache size in MB
+CACHE_INDEX_FILE = os.path.join(CACHE_DIR, 'cache_index.json')
+
+# Create cache directory if it doesn't exist
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Add this at the top to handle the case when rawpy is not installed
 try:
@@ -13,157 +40,307 @@ try:
     import io
     import traceback
     import numpy as np
-    print("RawPy successfully imported. RAW thumbnails will be available.")
+    logger.info("RawPy successfully imported. RAW thumbnails will be available.")
     RAWPY_AVAILABLE = True
 except ImportError:
-    print("RawPy not found. RAW thumbnails will not be available.")
-    print("Install with: pip install rawpy")
+    logger.warning("RawPy not found. RAW thumbnails will not be available.")
+    logger.info("Install with: pip install rawpy")
     RAWPY_AVAILABLE = False
 
-
-class FileIconItem(QWidget):
-    """Widget for displaying a file item in the icon view."""
+# Define a thumbnail cache to avoid regenerating thumbnails
+class ThumbnailCache:
+    """Cache for file thumbnails to avoid regenerating them"""
     
-    def __init__(self, file_info: Dict, parent=None):
-        super().__init__(parent)
-        self.file_info = file_info
-        self.setup_ui()
+    def __init__(self):
+        """Initialize the thumbnail cache"""
+        self.cache: Dict[str, QPixmap] = {}
+        self.loading: Set[str] = set()
+        self.callbacks: Dict[str, List[Callable[[str, QPixmap], None]]] = {}
+        self.queue = Queue()
+        self.worker_thread = Thread(target=self._worker, daemon=True)
+        self.worker_thread.start()
+
+    def get(self, file_path: str, size: QSize = QSize(64, 64)) -> Optional[QPixmap]:
+        """Get a thumbnail from the cache or generate it"""
+        key = f"{file_path}_{size.width()}x{size.height()}"
+        if key in self.cache:
+            return self.cache[key]
+        return None
+
+    def get_async(self, file_path: str, size: QSize, callback: Callable[[str, QPixmap], None]) -> None:
+        """Get a thumbnail asynchronously, calling the callback when done"""
+        key = f"{file_path}_{size.width()}x{size.height()}"
         
-    def setup_ui(self):
-        """Set up the UI components."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        # Create thumbnail container
-        icon_label = QLabel()
-        icon_label.setFixedSize(120, 90)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("""
-            QLabel {
-                background-color: #2a2a2a;
-                border-radius: 4px;
-            }
-        """)
-        
-        # Generate thumbnail based on file type
-        if self.file_info['type'] == 'image':
-            # For image files, load the actual image as thumbnail
-            pixmap = self._generate_image_thumbnail(self.file_info['path'])
-            if pixmap:
-                icon_label.setPixmap(pixmap)
-            else:
-                # Fallback to generic icon if thumbnail generation fails
-                icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-                pixmap = icon.pixmap(48, 48)
-                pixmap = self._apply_color_tint(pixmap, QColor(52, 152, 219))
-                icon_label.setPixmap(pixmap)
-        elif self.file_info['type'] == 'video':
-            # For videos, use a better video icon
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
-            pixmap = icon.pixmap(48, 48)
-            pixmap = self._apply_color_tint(pixmap, QColor(231, 76, 60))
+        # If already in cache, call the callback immediately
+        if key in self.cache:
+            callback(file_path, self.cache[key])
+            return
             
-            # Create a video thumbnail appearance
-            final_pixmap = QPixmap(120, 90)
-            final_pixmap.fill(QColor(25, 25, 25))
+        # If loading, add to callback list
+        if key in self.loading:
+            if key not in self.callbacks:
+                self.callbacks[key] = []
+            self.callbacks[key].append(callback)
+            return
             
-            painter = QPainter(final_pixmap)
-            # Draw video icon in center
-            painter.drawPixmap((120 - pixmap.width()) // 2, (90 - pixmap.height()) // 2, pixmap)
+        # Add to loading set and callback list
+        self.loading.add(key)
+        if key not in self.callbacks:
+            self.callbacks[key] = []
+        self.callbacks[key].append(callback)
+        
+        # Add to queue for processing
+        self.queue.put((file_path, size, key))
+
+    def _worker(self) -> None:
+        """Worker thread to generate thumbnails in the background"""
+        while True:
+            try:
+                file_path, size, key = self.queue.get()
+                try:
+                    if not os.path.exists(file_path):
+                        logging.warning(f"File does not exist: {file_path}")
+                        self.loading.discard(key)
+                        continue
+                        
+                    file_type = self._get_file_type(file_path)
+                    pixmap = self._generate_thumbnail(file_path, size, file_type)
+                    
+                    if pixmap:
+                        self.cache[key] = pixmap
+                        
+                        # Call all callbacks
+                        if key in self.callbacks:
+                            for callback in self.callbacks[key]:
+                                try:
+                                    callback(file_path, pixmap)
+                                except Exception as e:
+                                    logging.error(f"Error in thumbnail callback: {e}")
+                            del self.callbacks[key]
+                            
+                    self.loading.discard(key)
+                except Exception as e:
+                    logging.error(f"Error generating thumbnail: {e}")
+                    self.loading.discard(key)
+            except Empty:
+                time.sleep(0.1)
+            except Exception as e:
+                logging.error(f"Error in thumbnail worker: {e}")
+
+    def put(self, file_path: str, pixmap: QPixmap, size: QSize = QSize(64, 64)) -> None:
+        """Put a thumbnail in the cache"""
+        key = f"{file_path}_{size.width()}x{size.height()}"
+        self.cache[key] = pixmap
+
+    def clear(self) -> None:
+        """Clear the cache"""
+        self.cache.clear()
+        self.loading.clear()
+        self.callbacks.clear()
+        # Clear the queue
+        while not self.queue.empty():
+            try:
+                self.queue.get_nowait()
+            except Empty:
+                break
+
+    def _get_file_type(self, file_path: str) -> str:
+        """Get the file type based on extension"""
+        ext = os.path.splitext(file_path)[1].lower()
+        
+        # Image files
+        if ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp', '.svg']:
+            return 'image'
+        
+        # RAW image files
+        if ext in ['.raw', '.cr2', '.nef', '.arf', '.sr2', '.crw', '.dng', '.orf', '.pef', '.arw']:
+            return 'raw'
             
-            # Add a play triangle overlay
-            play_triangle = QPolygon([
-                QPoint(50, 30),
-                QPoint(75, 45),
-                QPoint(50, 60)
-            ])
-            painter.setBrush(QColor(231, 76, 60, 180))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawPolygon(play_triangle)
-            painter.end()
+        # Video files
+        if ext in ['.mp4', '.mov', '.avi', '.mkv', '.mpg', '.mpeg', '.3gp', '.wmv', '.flv', '.webm']:
+            return 'video'
             
-            icon_label.setPixmap(final_pixmap)
-        else:
-            # Generic file icon for other files
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-            pixmap = icon.pixmap(48, 48)
-            pixmap = self._apply_color_tint(pixmap, QColor(149, 165, 166))
+        # Document files
+        if ext in ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.rtf']:
+            return 'document'
             
-            # Center the icon in the thumbnail area
-            final_pixmap = QPixmap(120, 90)
-            final_pixmap.fill(QColor(25, 25, 25))
-            
-            painter = QPainter(final_pixmap)
-            painter.drawPixmap((120 - pixmap.width()) // 2, (90 - pixmap.height()) // 2, pixmap)
-            painter.end()
-            
-            icon_label.setPixmap(final_pixmap)
-            
-        layout.addWidget(icon_label)
-        
-        # File name (truncated if too long)
-        name = self.file_info['name']
-        if len(name) > 20:
-            # Truncate with ellipsis
-            ext = os.path.splitext(name)[1]
-            base = os.path.splitext(name)[0]
-            if len(base) > 17:
-                name = base[:17] + "..." + ext
-        
-        name_label = QLabel(name)
-        name_label.setFont(QFont("Arial", 9))
-        name_label.setStyleSheet("color: white;")
-        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_label.setWordWrap(True)
-        layout.addWidget(name_label)
-        
-        # Add file size beneath the name
-        size_kb = self.file_info['size'] / 1024
-        size_mb = size_kb / 1024
-        size_text = f"{size_mb:.1f} MB" if size_mb >= 1 else f"{size_kb:.1f} KB"
-        
-        size_label = QLabel(size_text)
-        size_label.setFont(QFont("Arial", 8))
-        size_label.setStyleSheet("color: #aaa;")
-        size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(size_label)
-        
-        # Set fixed size for consistent grid appearance
-        self.setFixedSize(140, 140)
-        
-        # Show full details in tooltip
-        details_text = (
-            f"Name: {self.file_info['name']}\n"
-            f"Size: {size_text}\n"
-            f"Created: {self.file_info['created'].strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Modified: {self.file_info['modified'].strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        self.setToolTip(details_text)
-        
-        # Styling
-        self.setStyleSheet("""
-            QWidget {
-                background-color: transparent;
-                border-radius: 6px;
-            }
-            QWidget:hover {
-                background-color: #2a2a2a;
-            }
-        """)
-        
-    def _generate_image_thumbnail(self, image_path: str) -> Optional[QPixmap]:
-        """Generate thumbnail for an image file.
-        
-        Args:
-            image_path: Path to the image file
-            
-        Returns:
-            Scaled pixmap or None if generation fails
-        """
+        return 'other'
+
+    def _generate_thumbnail(self, file_path: str, size: QSize, file_type: str) -> Optional[QPixmap]:
+        """Generate a thumbnail for a file"""
         try:
-            # Check for RAW file types and other special formats
-            ext = os.path.splitext(image_path)[1].lower()
+            if file_type == 'image':
+                return self._generate_image_thumbnail(file_path, size)
+            elif file_type == 'raw' and RAWPY_AVAILABLE:
+                return self._generate_raw_thumbnail(file_path, size)
+            elif file_type == 'video':
+                return self._generate_video_thumbnail(file_path, size)
+            elif file_type == 'document':
+                return self._generate_document_thumbnail(file_path, size)
+            else:
+                return self._generate_generic_thumbnail(file_path, size)
+        except Exception as e:
+            logging.error(f"Error generating thumbnail for {file_path}: {e}")
+            return None
+
+    def _generate_image_thumbnail(self, file_path: str, size: QSize) -> Optional[QPixmap]:
+        """Generate a thumbnail for an image file"""
+        try:
+            pixmap = QPixmap(file_path)
+            if pixmap.isNull():
+                return self._generate_generic_thumbnail(file_path, size)
+            return pixmap.scaled(size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        except Exception as e:
+            logging.error(f"Error generating image thumbnail: {e}")
+            return self._generate_generic_thumbnail(file_path, size)
+
+    def _generate_raw_thumbnail(self, file_path: str, size: QSize) -> Optional[QPixmap]:
+        """Generate a thumbnail for a RAW image file using rawpy"""
+        try:
+            if not RAWPY_AVAILABLE:
+                return self._generate_generic_thumbnail(file_path, size)
+                
+            with rawpy.imread(file_path) as raw:
+                try:
+                    # Try to get embedded thumbnail first
+                    thumb = raw.extract_thumb()
+                    if thumb.format == rawpy.ThumbFormat.JPEG:
+                        pixmap = QPixmap()
+                        pixmap.loadFromData(thumb.data)
+                        return pixmap.scaled(size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                except:
+                    pass
+                    
+                # If no embedded thumbnail, process the raw file
+                rgb = raw.postprocess(use_camera_wb=True, half_size=True, no_auto_bright=True)
+                height, width, channels = rgb.shape
+                
+                # Create QImage from numpy array
+                from PyQt6.QtGui import QImage
+                import numpy as np
+                
+                # Convert to RGB888 format for QImage
+                rgb_image = QImage(rgb.data, width, height, width * 3, QImage.Format.Format_RGB888)
+                pixmap = QPixmap.fromImage(rgb_image)
+                return pixmap.scaled(size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        except Exception as e:
+            logging.error(f"Error generating RAW thumbnail: {e}")
+            return self._generate_generic_thumbnail(file_path, size)
+
+    def _generate_video_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
+        """Generate a thumbnail for a video file"""
+        # For now, just return a generic video icon
+        # In the future, could integrate with a library like opencv to extract a frame
+        return self._generate_generic_thumbnail(file_path, size, is_video=True)
+
+    def _generate_document_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
+        """Generate a thumbnail for a document file"""
+        # Return a generic document icon
+        return self._generate_generic_thumbnail(file_path, size, is_document=True)
+
+    def _generate_generic_thumbnail(self, file_path: str, size: QSize, 
+                                   is_video: bool = False, 
+                                   is_document: bool = False) -> QPixmap:
+        """Generate a generic thumbnail with icon for file"""
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(pixmap)
+        
+        # File extension for overlay
+        ext = os.path.splitext(file_path)[1].lower()
+        if ext.startswith('.'):
+            ext = ext[1:]
+        
+        # Background with rounded corners
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QBrush(QColor("#303030")))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(0, 0, size.width(), size.height(), 4, 4)
+        
+        # Icon type based on file type
+        icon_color = QColor("#4a9eff")  # Blue for most files
+        icon_name = "📄"  # Default file icon
+        
+        if is_video:
+            icon_color = QColor("#ff4a4a")  # Red for video
+            icon_name = "🎬"
+        elif is_document:
+            icon_color = QColor("#4aff7f")  # Green for documents
+            icon_name = "📝"
+        elif ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp', 'svg']:
+            icon_color = QColor("#ff9e4a")  # Orange for images
+            icon_name = "🖼️"
+        elif ext in ['raw', 'cr2', 'nef', 'arf', 'sr2', 'crw', 'dng', 'orf', 'pef', 'arw']:
+            icon_color = QColor("#ff9e4a")  # Orange for RAW images
+            icon_name = "📸"
+        
+        # Draw icon
+        font = QFont()
+        font.setPointSize(size.height() // 2)
+        painter.setFont(font)
+        painter.setPen(icon_color)
+        painter.drawText(QRect(0, 0, size.width(), size.height()), Qt.AlignmentFlag.AlignCenter, icon_name)
+        
+        # Draw overlay with file extension for non-standard files
+        if ext and not is_video and not is_document and ext not in ['jpg', 'jpeg', 'png', 'gif', 'bmp']:
+            # Bottom overlay rectangle
+            painter.setBrush(QBrush(QColor(0, 0, 0, 180)))
+            painter.setPen(Qt.PenStyle.NoPen)
+            rect = QRect(0, size.height() - size.height() // 4, size.width(), size.height() // 4)
+            painter.drawRect(rect)
+            
+            # File extension text
+            painter.setPen(QPen(QColor(255, 255, 255)))
+            font = QFont()
+            font.setPointSize(size.height() // 6)
+            painter.setFont(font)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, ext.upper())
+        
+        painter.end()
+        return pixmap
+
+# Initialize the thumbnail cache
+THUMBNAIL_MANAGER = ThumbnailCache()
+
+
+class ThumbnailWorker(QRunnable):
+    """Worker for generating thumbnails asynchronously."""
+    
+    def __init__(self, cache_key: str, file_path: str, file_info: Dict, 
+                 thumb_width: int, thumb_height: int, callback: Callable = None):
+        super().__init__()
+        self.cache_key = cache_key
+        self.file_path = file_path
+        self.file_info = file_info
+        self.thumb_width = thumb_width
+        self.thumb_height = thumb_height
+        self.signals = ThumbnailSignals()
+        self.callback = callback
+        
+        # Connect the finished signal to the callback if provided
+        if callback:
+            self.signals.finished.connect(callback)
+        
+    @pyqtSlot()
+    def run(self):
+        """Main worker method that runs in a separate thread."""
+        try:
+            start_time = time.time()
+            pixmap = self._generate_thumbnail()
+            if pixmap:
+                # Emit the signal with the result
+                self.signals.finished.emit(self.cache_key, pixmap)
+                logger.debug(f"Thumbnail generated for {self.file_path} in {time.time() - start_time:.2f}s")
+        except Exception as e:
+            logger.error(f"Error in thumbnail worker: {e}")
+    
+    def _generate_thumbnail(self) -> Optional[QPixmap]:
+        """Generate thumbnail based on file type."""
+        try:
+            # Get file extension
+            ext = os.path.splitext(self.file_path)[1].lower()
+            file_type = self.file_info.get('type', '')
             
             # Comprehensive list of RAW formats
             raw_formats = [
@@ -201,178 +378,117 @@ class FileIconItem(QWidget):
             
             special_formats = ['.heic', '.heif', '.webp', '.tiff', '.tif']
             
-            # Print the file extension to verify it's detected correctly
-            print(f"Processing file with extension: {ext}")
-            
-            # For RAW files, try to extract embedded thumbnail
+            # Handle RAW files
             if ext in raw_formats and RAWPY_AVAILABLE:
-                try:
-                    print(f"Attempting to process RAW file: {image_path}")
-                    # Open the RAW file
-                    with rawpy.imread(image_path) as raw:
-                        # First try to extract embedded thumbnail if available
-                        try:
-                            print("Attempting to extract thumbnail")
-                            # Some RAW files have embedded thumbnails we can extract
-                            thumb_data = raw.extract_thumb()
-                            
-                            if thumb_data is not None:
-                                print(f"Extracted thumbnail format: {thumb_data.format}")
-                                
-                                # Convert thumb data to QPixmap
-                                if thumb_data.format == 'jpeg':
-                                    q_data = QByteArray(thumb_data.data)
-                                    pixmap = QPixmap()
-                                    pixmap.loadFromData(q_data)
-                                    
-                                    if not pixmap.isNull():
-                                        print("Successfully loaded thumbnail from RAW")
-                                        # Scale and center if needed
-                                        pixmap = pixmap.scaled(
-                                            120, 90, 
-                                            Qt.AspectRatioMode.KeepAspectRatio, 
-                                            Qt.TransformationMode.SmoothTransformation
-                                        )
-                                        
-                                        # Center the thumbnail if needed
-                                        if pixmap.width() < 120 or pixmap.height() < 90:
-                                            final_pixmap = QPixmap(120, 90)
-                                            final_pixmap.fill(QColor(25, 25, 25))
-                                            
-                                            painter = QPainter(final_pixmap)
-                                            x = (120 - pixmap.width()) // 2
-                                            y = (90 - pixmap.height()) // 2
-                                            painter.drawPixmap(x, y, pixmap)
-                                            painter.end()
-                                            
-                                            return final_pixmap
-                                        
-                                        return pixmap
-                        except (AttributeError, ValueError, RuntimeError) as e:
-                            print(f"No embedded thumbnail available: {str(e)}")
-                        
-                        # If no thumbnail available or extraction failed, try to render the RAW
-                        try:
-                            print("Attempting to postprocess RAW data (may be slow)")
-                            # Process the RAW data to RGB (this can be slow)
-                            rgb = raw.postprocess(use_camera_wb=True, half_size=True, output_bps=8)
-                            
-                            # Convert numpy array to QImage
-                            height, width, channels = rgb.shape
-                            bytes_per_line = channels * width
-                            
-                            # Convert from RGB to BGR which is what QImage expects
-                            rgb_swapped = rgb[...,::-1].copy()
-                            
-                            # Create QImage and convert to QPixmap
-                            q_img = QImage(rgb_swapped.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
-                            pixmap = QPixmap.fromImage(q_img)
-                            
-                            if not pixmap.isNull():
-                                print("Successfully created thumbnail from RAW processing")
-                                # Scale and center
-                                pixmap = pixmap.scaled(
-                                    120, 90, 
-                                    Qt.AspectRatioMode.KeepAspectRatio, 
-                                    Qt.TransformationMode.SmoothTransformation
-                                )
-                                
-                                # Center the thumbnail if needed
-                                if pixmap.width() < 120 or pixmap.height() < 90:
-                                    final_pixmap = QPixmap(120, 90)
-                                    final_pixmap.fill(QColor(25, 25, 25))
-                                    
-                                    painter = QPainter(final_pixmap)
-                                    x = (120 - pixmap.width()) // 2
-                                    y = (90 - pixmap.height()) // 2
-                                    painter.drawPixmap(x, y, pixmap)
-                                    painter.end()
-                                    
-                                    return final_pixmap
-                                
-                                return pixmap
-                        except Exception as e:
-                            print(f"Error processing RAW data: {str(e)}")
-                            print(traceback.format_exc())
-                except Exception as e:
-                    print(f"Error opening RAW file: {str(e)}")
-                    print(traceback.format_exc())
-                
-                # Fallback to format indicator if all RAW processing failed
-                print(f"Falling back to format indicator for RAW file: {image_path}")
-                return self._create_format_indicator(ext, True)
+                return self._generate_raw_thumbnail()
             
-            # For special formats that might not load properly in Qt
+            # Handle special formats
             if ext in special_formats:
-                # Try to load it first
-                pixmap = QPixmap(image_path)
+                pixmap = QPixmap(self.file_path)
                 if not pixmap.isNull():
-                    # Standard processing for successful loads
-                    pixmap = pixmap.scaled(
-                        120, 90, 
-                        Qt.AspectRatioMode.KeepAspectRatio, 
-                        Qt.TransformationMode.SmoothTransformation
-                    )
-                    
-                    # Center if needed
-                    if pixmap.width() < 120 or pixmap.height() < 90:
-                        final_pixmap = QPixmap(120, 90)
-                        final_pixmap.fill(QColor(25, 25, 25))
-                        
-                        painter = QPainter(final_pixmap)
-                        x = (120 - pixmap.width()) // 2
-                        y = (90 - pixmap.height()) // 2
-                        painter.drawPixmap(x, y, pixmap)
-                        painter.end()
-                        
-                        return final_pixmap
-                    
-                    return pixmap
+                    # Scale it
+                    return self._scale_and_center_pixmap(pixmap)
                 else:
-                    # Fallback to format indicator
+                    # Create format indicator
                     return self._create_format_indicator(ext, False)
             
-            # For standard formats, try to load the actual image
-            pixmap = QPixmap(image_path)
-            if pixmap.isNull():
-                return None
-                
-            # Scale the image to fit within the thumbnail size while maintaining aspect ratio
-            pixmap = pixmap.scaled(
-                120, 90, 
-                Qt.AspectRatioMode.KeepAspectRatio, 
-                Qt.TransformationMode.SmoothTransformation
-            )
+            # Standard image formats
+            if file_type == 'image':
+                pixmap = QPixmap(self.file_path)
+                if not pixmap.isNull():
+                    return self._scale_and_center_pixmap(pixmap)
             
-            # If the pixmap is smaller than the thumbnail size, center it
-            if pixmap.width() < 120 or pixmap.height() < 90:
-                final_pixmap = QPixmap(120, 90)
-                final_pixmap.fill(QColor(25, 25, 25))
-                
-                painter = QPainter(final_pixmap)
-                # Draw pixmap centered
-                x = (120 - pixmap.width()) // 2
-                y = (90 - pixmap.height()) // 2
-                painter.drawPixmap(x, y, pixmap)
-                painter.end()
-                
-                return final_pixmap
+            # Video thumbnails
+            if file_type == 'video':
+                # For now, create a generic video thumbnail
+                # Could be enhanced to extract actual video frames
+                return self._create_video_thumbnail()
             
-            return pixmap
-        except Exception:
+            # Generic file thumbnail
+            return self._create_generic_thumbnail()
+            
+        except Exception as e:
+            logger.error(f"Error generating thumbnail: {e}")
             return None
     
-    def _create_format_indicator(self, ext: str, is_raw: bool = False) -> QPixmap:
-        """Create a formatted indicator for special file formats.
+    def _generate_raw_thumbnail(self) -> Optional[QPixmap]:
+        """Generate thumbnail for RAW image files."""
+        try:
+            if not RAWPY_AVAILABLE:
+                return self._create_format_indicator(
+                    os.path.splitext(self.file_path)[1].lower(), True
+                )
+                
+            with rawpy.imread(self.file_path) as raw:
+                # First try embedded thumbnail
+                try:
+                    thumb_data = raw.extract_thumb()
+                    if thumb_data and thumb_data.format == 'jpeg':
+                        q_data = QByteArray(thumb_data.data)
+                        pixmap = QPixmap()
+                        pixmap.loadFromData(q_data)
+                        
+                        if not pixmap.isNull():
+                            return self._scale_and_center_pixmap(pixmap)
+                except (AttributeError, ValueError, RuntimeError):
+                    pass
+                
+                # Fall back to processing the RAW data
+                try:
+                    rgb = raw.postprocess(use_camera_wb=True, half_size=True, output_bps=8)
+                    
+                    height, width, channels = rgb.shape
+                    bytes_per_line = channels * width
+                    
+                    # Convert from RGB to BGR which is what QImage expects
+                    rgb_swapped = rgb[...,::-1].copy()
+                    
+                    q_img = QImage(rgb_swapped.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+                    pixmap = QPixmap.fromImage(q_img)
+                    
+                    if not pixmap.isNull():
+                        return self._scale_and_center_pixmap(pixmap)
+                except Exception as e:
+                    logger.error(f"Error processing RAW data: {e}")
+                    
+            # If all attempts failed, create format indicator
+            return self._create_format_indicator(
+                os.path.splitext(self.file_path)[1].lower(), True
+            )
+                
+        except Exception as e:
+            logger.error(f"Error generating RAW thumbnail: {e}")
+            return self._create_format_indicator(
+                os.path.splitext(self.file_path)[1].lower(), True
+            )
+    
+    def _scale_and_center_pixmap(self, pixmap: QPixmap) -> QPixmap:
+        """Scale pixmap to thumbnail size and center it."""
+        # Scale the pixmap
+        pixmap = pixmap.scaled(
+            self.thumb_width, self.thumb_height, 
+            Qt.AspectRatioMode.KeepAspectRatio, 
+            Qt.TransformationMode.SmoothTransformation
+        )
         
-        Args:
-            ext: File extension
-            is_raw: Whether this is a RAW format
+        # Center if needed
+        if pixmap.width() < self.thumb_width or pixmap.height() < self.thumb_height:
+            final_pixmap = QPixmap(self.thumb_width, self.thumb_height)
+            final_pixmap.fill(QColor(25, 25, 25))
             
-        Returns:
-            Formatted pixmap indicator
-        """
-        final_pixmap = QPixmap(120, 90)
+            painter = QPainter(final_pixmap)
+            x = (self.thumb_width - pixmap.width()) // 2
+            y = (self.thumb_height - pixmap.height()) // 2
+            painter.drawPixmap(x, y, pixmap)
+            painter.end()
+            
+            return final_pixmap
+        
+        return pixmap
+    
+    def _create_format_indicator(self, ext: str, is_raw: bool = False) -> QPixmap:
+        """Create a formatted indicator for special file formats."""
+        final_pixmap = QPixmap(self.thumb_width, self.thumb_height)
         final_pixmap.fill(QColor(25, 25, 25))
         
         painter = QPainter(final_pixmap)
@@ -381,19 +497,19 @@ class FileIconItem(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         if is_raw:
             # RAW format - blue gradient
-            gradient = QLinearGradient(0, 0, 120, 90)
+            gradient = QLinearGradient(0, 0, self.thumb_width, self.thumb_height)
             gradient.setColorAt(0, QColor(41, 128, 185, 180))  # Darker blue
             gradient.setColorAt(1, QColor(52, 152, 219, 180))  # Lighter blue
             painter.setBrush(gradient)
         else:
             # Special format - purple gradient
-            gradient = QLinearGradient(0, 0, 120, 90)
+            gradient = QLinearGradient(0, 0, self.thumb_width, self.thumb_height)
             gradient.setColorAt(0, QColor(142, 68, 173, 180))  # Darker purple
             gradient.setColorAt(1, QColor(155, 89, 182, 180))  # Lighter purple
             painter.setBrush(gradient)
         
         # Draw rounded rectangle
-        painter.drawRoundedRect(0, 0, 120, 90, 8, 8)
+        painter.drawRoundedRect(0, 0, self.thumb_width, self.thumb_height, 8, 8)
         
         # Draw format name
         painter.setPen(QColor(255, 255, 255))
@@ -412,15 +528,295 @@ class FileIconItem(QWidget):
         
         painter.end()
         return final_pixmap
-            
-    def _apply_color_tint(self, pixmap, color):
-        """Apply a color tint to a pixmap while preserving transparency."""
-        result = pixmap.copy()
-        painter = QPainter(result)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        painter.fillRect(result.rect(), color)
+    
+    def _create_video_thumbnail(self) -> QPixmap:
+        """Create a video thumbnail with play icon."""
+        final_pixmap = QPixmap(self.thumb_width, self.thumb_height)
+        final_pixmap.fill(QColor(25, 25, 25))
+        
+        painter = QPainter(final_pixmap)
+        
+        # Add a play triangle overlay
+        play_triangle = QPolygon([
+            QPoint(self.thumb_width // 2 - 25, self.thumb_height // 2 - 25),
+            QPoint(self.thumb_width // 2 + 25, self.thumb_height // 2),
+            QPoint(self.thumb_width // 2 - 25, self.thumb_height // 2 + 25)
+        ])
+        painter.setBrush(QColor(231, 76, 60, 180))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPolygon(play_triangle)
+        
+        # Add video text
+        painter.setPen(QColor(255, 255, 255))
+        painter.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+        painter.drawText(final_pixmap.rect().adjusted(0, 30, 0, 0), 
+                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, 
+                        "VIDEO")
+        
         painter.end()
-        return result
+        return final_pixmap
+    
+    def _create_generic_thumbnail(self) -> QPixmap:
+        """Create a generic file thumbnail."""
+        final_pixmap = QPixmap(self.thumb_width, self.thumb_height)
+        final_pixmap.fill(QColor(25, 25, 25))
+        
+        painter = QPainter(final_pixmap)
+        
+        # Draw icon for generic file
+        icon = QIcon.fromTheme("text-x-generic")
+        if icon.isNull():
+            # Draw simple file icon
+            painter.setPen(QColor(149, 165, 166))
+            painter.setBrush(QColor(149, 165, 166, 100))
+            painter.drawRect(self.thumb_width // 2 - 15, self.thumb_height // 2 - 20, 30, 40)
+        else:
+            pixmap = icon.pixmap(48, 48)
+            painter.drawPixmap(
+                (self.thumb_width - pixmap.width()) // 2,
+                (self.thumb_height - pixmap.height()) // 2,
+                pixmap
+            )
+        
+        # Add file extension text
+        ext = os.path.splitext(self.file_path)[1].upper()
+        if ext:
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+            painter.drawText(final_pixmap.rect(), Qt.AlignmentFlag.AlignCenter, ext[1:])
+        
+        painter.end()
+        return final_pixmap
+
+
+class FileIconItem(QWidget):
+    """Widget for displaying a file item in the icon view."""
+    
+    # Thumbnail dimensions
+    THUMB_WIDTH = 120
+    THUMB_HEIGHT = 90
+    
+    def __init__(self, file_info: Dict, parent=None):
+        super().__init__(parent)
+        self.file_info = file_info
+        self.cache_key = self._get_cache_key(file_info['path'])
+        self.thumbnail_loaded = False
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Set up the UI components."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Create thumbnail container
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(self.THUMB_WIDTH, self.THUMB_HEIGHT)
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setStyleSheet("""
+            QLabel {
+                background-color: #2a2a2a;
+                border-radius: 4px;
+            }
+        """)
+        
+        # Set an immediate default icon based on file type
+        self._set_default_icon()
+        
+        # Request the thumbnail asynchronously
+        self._request_thumbnail()
+        
+        layout.addWidget(self.icon_label)
+        
+        # File name (truncated if too long)
+        name = self.file_info['name']
+        if len(name) > 20:
+            # Truncate with ellipsis
+            ext = os.path.splitext(name)[1]
+            base = os.path.splitext(name)[0]
+            if len(base) > 17:
+                name = base[:17] + "..." + ext
+        
+        name_label = QLabel(name)
+        name_label.setFont(QFont("Arial", 9))
+        name_label.setStyleSheet("color: white;")
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_label.setWordWrap(True)
+        layout.addWidget(name_label)
+        
+        # Add file size beneath the name
+        size_kb = self.file_info['size'] / 1024
+        size_mb = size_kb / 1024
+        size_text = f"{size_mb:.1f} MB" if size_mb >= 1 else f"{size_kb:.1f} KB"
+        
+        size_label = QLabel(size_text)
+        size_label.setFont(QFont("Arial", 8))
+        size_label.setStyleSheet("color: #aaa;")
+        size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(size_label)
+        
+        # Set fixed size for consistent grid appearance
+        self.setFixedSize(self.THUMB_WIDTH + 20, self.THUMB_HEIGHT + 40)
+        
+        # Show full details in tooltip
+        details_text = (
+            f"Name: {self.file_info['name']}\n"
+            f"Size: {size_text}\n"
+            f"Created: {self.file_info['created'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Modified: {self.file_info['modified'].strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        self.setToolTip(details_text)
+        
+        # Styling
+        self.setStyleSheet("""
+            QWidget {
+                background-color: transparent;
+                border-radius: 6px;
+            }
+            QWidget:hover {
+                background-color: #2a2a2a;
+            }
+        """)
+    
+    def _set_default_icon(self):
+        """Set a default icon based on file type."""
+        # Create a background for the icon
+        pixmap = QPixmap(self.THUMB_WIDTH, self.THUMB_HEIGHT)
+        pixmap.fill(QColor(34, 34, 34))  # Slightly darker than the background
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        file_type = self.file_info['type']
+        filename = self.file_info['name']
+        ext = os.path.splitext(filename)[1].lower()
+        
+        if file_type == 'image':
+            # For image files
+            gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            gradient.setColorAt(0, QColor(30, 30, 40))
+            gradient.setColorAt(1, QColor(34, 34, 44))
+            painter.fillRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, gradient)
+            
+            # Draw icon
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+            icon_pixmap = icon.pixmap(48, 48)
+            
+            # Apply color tint - blue for images
+            icon_painter = QPainter(icon_pixmap)
+            icon_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            icon_painter.fillRect(icon_pixmap.rect(), QColor(52, 152, 219))
+            icon_painter.end()
+            
+            # Draw in center
+            painter.drawPixmap(
+                (self.THUMB_WIDTH - icon_pixmap.width()) // 2,
+                (self.THUMB_HEIGHT - icon_pixmap.height()) // 2,
+                icon_pixmap
+            )
+            
+            # Draw extension
+            if ext in ['.heic', '.heif', '.raw', '.cr2', '.nef', '.arw', '.dng']:
+                # Highlight special formats
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+                painter.drawText(pixmap.rect().adjusted(0, self.THUMB_HEIGHT - 30, 0, 0), 
+                                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, 
+                                ext[1:].upper())
+            
+        elif file_type == 'video':
+            # For video files
+            gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            gradient.setColorAt(0, QColor(40, 30, 30))
+            gradient.setColorAt(1, QColor(44, 34, 34))
+            painter.fillRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, gradient)
+            
+            # Draw play triangle
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(231, 76, 60, 200))
+            
+            # Create play button triangle
+            play_triangle = QPolygon([
+                QPoint(self.THUMB_WIDTH // 2 - 25, self.THUMB_HEIGHT // 2 - 25),
+                QPoint(self.THUMB_WIDTH // 2 + 25, self.THUMB_HEIGHT // 2),
+                QPoint(self.THUMB_WIDTH // 2 - 25, self.THUMB_HEIGHT // 2 + 25)
+            ])
+            painter.drawPolygon(play_triangle)
+            
+            # Draw "VIDEO" text
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+            painter.drawText(pixmap.rect().adjusted(0, self.THUMB_HEIGHT - 25, 0, 0), 
+                            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, 
+                            "VIDEO")
+        else:
+            # For other files
+            gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            gradient.setColorAt(0, QColor(30, 35, 30))
+            gradient.setColorAt(1, QColor(34, 39, 34))
+            painter.fillRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, gradient)
+            
+            # Draw icon
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+            icon_pixmap = icon.pixmap(48, 48)
+            
+            # Apply color tint - gray for generic files
+            icon_painter = QPainter(icon_pixmap)
+            icon_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+            icon_painter.fillRect(icon_pixmap.rect(), QColor(149, 165, 166))
+            icon_painter.end()
+            
+            # Draw in center
+            painter.drawPixmap(
+                (self.THUMB_WIDTH - icon_pixmap.width()) // 2,
+                (self.THUMB_HEIGHT - icon_pixmap.height()) // 2,
+                icon_pixmap
+            )
+            
+            # Draw extension text
+            if ext:
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
+                painter.drawText(pixmap.rect().adjusted(0, self.THUMB_HEIGHT - 25, 0, 0), 
+                                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, 
+                                ext[1:].upper())
+        
+        # Add subtle "loading" indicator
+        painter.setPen(QPen(QColor(255, 255, 255, 100), 1))
+        painter.drawText(pixmap.rect().adjusted(0, 10, 0, 0), 
+                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, 
+                        "Loading...")
+        
+        painter.end()
+        
+        # Set the pixmap
+        self.icon_label.setPixmap(pixmap)
+    
+    def _request_thumbnail(self):
+        """Request thumbnail asynchronously."""
+        def update_thumbnail(key, pixmap):
+            """Callback when thumbnail is ready."""
+            if not pixmap.isNull() and not self.thumbnail_loaded:
+                self.icon_label.setPixmap(pixmap)
+                self.thumbnail_loaded = True
+                
+        # Request thumbnail asynchronously
+        THUMBNAIL_MANAGER.get_async(
+            self.file_info['path'],
+            QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT),
+            update_thumbnail
+        )
+    
+    def _get_cache_key(self, file_path: str) -> str:
+        """Generate a unique cache key for a file based on path and modification time."""
+        try:
+            # Get file modification time to ensure cache is invalidated when file changes
+            mod_time = os.path.getmtime(file_path)
+            key_string = f"{file_path}_{mod_time}"
+            return hashlib.md5(key_string.encode()).hexdigest()
+        except Exception:
+            # If there's any error, just use the file path
+            return hashlib.md5(file_path.encode()).hexdigest()
 
 
 class FileListItem(QWidget):
@@ -429,6 +825,7 @@ class FileListItem(QWidget):
     def __init__(self, file_info: Dict, parent=None):
         super().__init__(parent)
         self.file_info = file_info
+        self.cache_key = self._get_cache_key(file_info['path'])
         self.setup_ui()
         
     def setup_ui(self):
@@ -512,6 +909,17 @@ class FileListItem(QWidget):
         painter.fillRect(result.rect(), color)
         painter.end()
         return result
+        
+    def _get_cache_key(self, file_path: str) -> str:
+        """Generate a unique cache key for a file based on path and modification time."""
+        try:
+            # Get file modification time to ensure cache is invalidated when file changes
+            mod_time = os.path.getmtime(file_path)
+            key_string = f"{file_path}_{mod_time}"
+            return hashlib.md5(key_string.encode()).hexdigest()
+        except Exception:
+            # If there's any error, just use the file path
+            return hashlib.md5(file_path.encode()).hexdigest()
 
 
 class FileListWidget(QWidget):
@@ -523,12 +931,22 @@ class FileListWidget(QWidget):
     LIST_VIEW = 0
     ICON_VIEW = 1
     
+    # Thumbnail size for icon view
+    ICON_SIZE = QSize(120, 90)
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setup_ui()
         self.file_model = None
         self.current_file_types = None
         self.view_mode = self.LIST_VIEW  # Default to list view
+        self.is_loading = False  # Flag to track if thumbnail loading is in progress
+        self.pending_thumbnails = 0  # Counter for pending thumbnail generations
+        self.loaded_thumbnails = 0   # Counter for loaded thumbnails
+        self.visible_items = []      # List to track currently visible items
+        self.scroll_timer = QTimer()  # Timer to delay thumbnail loading during scrolling
+        self.scroll_timer.setSingleShot(True)
+        self.scroll_timer.timeout.connect(self._load_visible_thumbnails)
         
     def setup_ui(self):
         """Set up the UI components."""
@@ -536,17 +954,37 @@ class FileListWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
+        # Top bar with status and controls
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(8, 8, 8, 0)
+        
         # Status label (No files, file count, etc.)
         self.status_label = QLabel("No files found")
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.status_label.setStyleSheet("color: white; padding: 5px;")
-        layout.addWidget(self.status_label)
+        top_bar.addWidget(self.status_label)
+        
+        # Add stretch to push loading status to the right
+        top_bar.addStretch()
+        
+        # Loading progress indicator
+        self.loading_label = QLabel()
+        self.loading_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.loading_label.setStyleSheet("color: #aaa; font-size: 10px;")
+        self.loading_label.hide()  # Hidden by default
+        top_bar.addWidget(self.loading_label)
+        
+        layout.addLayout(top_bar)
         
         # File list widget
         self.list_widget = QListWidget()
         self.list_widget.setFrameShape(self.list_widget.Shape.NoFrame)
         self.list_widget.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.list_widget.itemClicked.connect(self._handle_item_clicked)
+        
+        # Connect scroll events to prioritize visible thumbnails
+        self.list_widget.verticalScrollBar().valueChanged.connect(self._handle_scroll)
+        
         layout.addWidget(self.list_widget)
         
         # Styling
@@ -577,7 +1015,68 @@ class FileListWidget(QWidget):
                 background: #555;
             }
         """)
+    
+    def _handle_scroll(self):
+        """Handle scroll events to prioritize visible thumbnails."""
+        # Reset the timer to prevent multiple calls during continuous scrolling
+        self.scroll_timer.stop()
+        self.scroll_timer.start(150)  # 150ms delay
         
+    def _load_visible_thumbnails(self):
+        """Prioritize loading thumbnails for currently visible items."""
+        if self.view_mode != self.ICON_VIEW:
+            return
+            
+        # Get visible items
+        visible_rect = self.list_widget.viewport().rect()
+        self.visible_items = []
+        
+        # Iterate through all items
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            item_rect = self.list_widget.visualItemRect(item)
+            
+            # Check if item is visible
+            if visible_rect.intersects(item_rect):
+                widget = self.list_widget.itemWidget(item)
+                if widget and isinstance(widget, FileIconItem) and not widget.thumbnail_loaded:
+                    self.visible_items.append(widget)
+                    
+                    # Request thumbnail with high priority
+                    THUMBNAIL_MANAGER.get_async(
+                        widget.file_info['path'],
+                        QSize(widget.THUMB_WIDTH, widget.THUMB_HEIGHT),
+                        lambda key, pixmap: self._handle_thumbnail_loaded(key, pixmap, widget)
+                    )
+    
+    def _handle_thumbnail_loaded(self, key, pixmap, widget):
+        """Handle when a thumbnail is loaded."""
+        if widget.thumbnail_loaded:
+            return
+            
+        # Update the widget
+        widget.icon_label.setPixmap(pixmap)
+        widget.thumbnail_loaded = True
+        
+        # Update loading progress
+        self._handle_thumbnail_status_changed(key, pixmap)
+    
+    def _handle_thumbnail_status_changed(self, key, pixmap):
+        """Track thumbnail loading status."""
+        self.loaded_thumbnails += 1
+        
+        # Update loading status
+        if self.pending_thumbnails > 0:
+            progress = (self.loaded_thumbnails / self.pending_thumbnails) * 100
+            self.loading_label.setText(f"Loading thumbnails... {int(progress)}% ({self.loaded_thumbnails}/{self.pending_thumbnails})")
+            
+            # Hide when complete
+            if self.loaded_thumbnails >= self.pending_thumbnails:
+                self.loading_label.setText("All thumbnails loaded")
+                # Hide after a brief delay
+                QTimer.singleShot(2000, self.loading_label.hide)
+                self.is_loading = False
+
     def set_view_mode(self, mode: int):
         """Set the view mode.
         
@@ -665,6 +1164,19 @@ class FileListWidget(QWidget):
         # Refresh the view if we have a model
         if self.file_model:
             self.update_view()
+            
+        # Load visible thumbnails if in icon view
+        if mode == self.ICON_VIEW:
+            QTimer.singleShot(100, self._load_visible_thumbnails)
+    
+    def clear_thumbnail_cache(self):
+        """Clear the thumbnail cache."""
+        THUMBNAIL_MANAGER.clear()
+        logger.info("Thumbnail cache cleared")
+        
+        # Refresh view to regenerate thumbnails
+        if self.file_model:
+            self.update_view()
         
     def set_file_model(self, model, file_types: Optional[List[str]] = None):
         """Set the file model and update the view.
@@ -712,18 +1224,45 @@ class FileListWidget(QWidget):
                 
             self.status_label.setText(f"{len(files)} files found ({', '.join(status_parts)})")
         
+        # Reset thumbnail counters
+        self.pending_thumbnails = len(files)
+        self.loaded_thumbnails = 0
+        
+        # Show loading indicator
+        if self.pending_thumbnails > 0:
+            self.loading_label.setText(f"Loading thumbnails... 0% (0/{self.pending_thumbnails})")
+            self.loading_label.show()
+            self.is_loading = True
+        
+        # Mark loading as started
+        self.is_loading = True
+        
         # Add files to the list widget based on the current view mode
         for file_info in files:
             item = QListWidgetItem(self.list_widget)
             
             if self.view_mode == self.ICON_VIEW:
                 widget = FileIconItem(file_info)
+                # Don't automatically request thumbnails for all items
+                # They will be requested based on visibility
                 item.setSizeHint(widget.sizeHint())
             else:
                 widget = FileListItem(file_info)
                 item.setSizeHint(widget.sizeHint())
                 
+                # For list view icons, just track them directly
+                self._handle_thumbnail_status_changed(None, None)
+                
             self.list_widget.setItemWidget(item, widget)
+        
+        # If no pending thumbnails, consider loading complete
+        if self.pending_thumbnails == 0:
+            self.is_loading = False
+            self.loading_label.hide()
+        
+        # Load visible thumbnails after a short delay
+        if self.view_mode == self.ICON_VIEW:
+            QTimer.singleShot(100, self._load_visible_thumbnails)
             
     def _handle_item_clicked(self, item):
         """Handle item click event.
