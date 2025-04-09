@@ -51,7 +51,7 @@ class SDCardPanel(QWidget):
         self.scan_button.setEnabled(False)
         self.scan_button.setStyleSheet("""
             QPushButton {
-                background-color: #0d6efd;
+                background-color: #333;
                 color: white;
                 border: none;
                 padding: 6px 12px;

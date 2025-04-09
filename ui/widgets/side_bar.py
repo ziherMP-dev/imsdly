@@ -75,26 +75,6 @@ class SideBar(QFrame):
         # Add stretch to push bottom buttons down
         layout.addStretch()
         
-        # Add refresh button
-        refresh_btn = QPushButton("Refresh")
-        refresh_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload)
-        refresh_btn.setIcon(refresh_icon)
-        refresh_btn.setIconSize(QSize(48, 48))  # 3x bigger icon
-        refresh_btn.setMinimumHeight(72)  # 3x bigger height
-        refresh_btn.setMinimumWidth(200)  # 2x wider
-        refresh_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 16px;
-                padding: 12px;
-                text-align: left;
-                border: none;
-                border-bottom: 1px solid #333;
-                margin: 0;
-            }
-        """)
-        refresh_btn.clicked.connect(self.handle_refresh)
-        layout.addWidget(refresh_btn)
-        
         # Add exit button at the bottom
         exit_btn = QPushButton("Exit")
         exit_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton)
@@ -117,11 +97,6 @@ class SideBar(QFrame):
         # Log final layout properties
         logger.debug(f"SideBar final size: {self.size()}")
         
-    def handle_refresh(self):
-        """Handle refresh button click"""
-        if hasattr(self, 'sd_card_list'):
-            self.sd_card_list.refresh_cards()
-            
     def _handle_cards_updated(self, cards):
         """Handle when the SD card list is updated"""
         if hasattr(self, 'sd_card_list'):
