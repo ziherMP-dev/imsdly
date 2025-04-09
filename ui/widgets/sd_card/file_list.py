@@ -1,14 +1,10 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QHBoxLayout, QSizePolicy
+    QHBoxLayout, QSizePolicy, QStyle
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor
+from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter
 from typing import Dict, Optional, List
-import logging
-
-# Set up logging
-logger = logging.getLogger(__name__)
 
 class FileListItem(QWidget):
     """Widget for displaying a file item in the list."""
@@ -16,7 +12,6 @@ class FileListItem(QWidget):
     def __init__(self, file_info: Dict, parent=None):
         super().__init__(parent)
         self.file_info = file_info
-        logger.debug(f"Creating FileListItem for: {file_info.get('name', 'unknown')}")
         self.setup_ui()
         
     def setup_ui(self):
@@ -28,15 +23,27 @@ class FileListItem(QWidget):
         icon_label = QLabel()
         icon_label.setFixedSize(16, 16)
         
-        # Create colored rectangle for icon
-        pixmap = QPixmap(16, 16)
-        
+        # Get appropriate icon based on file type
         if self.file_info['type'] == 'image':
-            pixmap.fill(QColor(52, 152, 219))  # Blue
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
         elif self.file_info['type'] == 'video':
-            pixmap.fill(QColor(231, 76, 60))   # Red
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay)
         else:
-            pixmap.fill(QColor(149, 165, 166)) # Gray
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+            
+        # Create pixmap with icon
+        pixmap = icon.pixmap(16, 16)
+        
+        # Apply color tint based on file type
+        if self.file_info['type'] == 'image':
+            # Blue tint for images
+            pixmap = self._apply_color_tint(pixmap, QColor(52, 152, 219))
+        elif self.file_info['type'] == 'video':
+            # Red tint for videos
+            pixmap = self._apply_color_tint(pixmap, QColor(231, 76, 60))
+        else:
+            # Gray tint for other files
+            pixmap = self._apply_color_tint(pixmap, QColor(149, 165, 166))
             
         icon_label.setPixmap(pixmap)
         layout.addWidget(icon_label)
@@ -47,18 +54,24 @@ class FileListItem(QWidget):
         name_label.setStyleSheet("color: white;")
         layout.addWidget(name_label)
         
-        # Set tooltip with file details
+        # Add stretch to push details to the right
+        layout.addStretch()
+        
+        # Add file details
         size_kb = self.file_info['size'] / 1024
         size_mb = size_kb / 1024
         size_text = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{size_kb:.2f} KB"
         
-        tooltip_text = (
-            f"Name: {self.file_info['name']}\n"
-            f"Size: {size_text}\n"
-            f"Created: {self.file_info['created'].strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Modified: {self.file_info['modified'].strftime('%Y-%m-%d %H:%M:%S')}"
+        details_text = (
+            f"Size: {size_text} | "
+            f"Created: {self.file_info['created'].strftime('%Y-%m-%d')} | "
+            f"Modified: {self.file_info['modified'].strftime('%Y-%m-%d')}"
         )
-        self.setToolTip(tooltip_text)
+        
+        details_label = QLabel(details_text)
+        details_label.setFont(QFont("Arial", 8))
+        details_label.setStyleSheet("color: #aaa;")
+        layout.addWidget(details_label)
         
         # Set fixed height for consistent list appearance
         self.setFixedHeight(30)
@@ -73,6 +86,23 @@ class FileListItem(QWidget):
                 border-radius: 3px;
             }
         """)
+        
+    def _apply_color_tint(self, pixmap, color):
+        """Apply a color tint to a pixmap while preserving transparency.
+        
+        Args:
+            pixmap: The original pixmap
+            color: The color to tint with
+            
+        Returns:
+            The tinted pixmap
+        """
+        result = pixmap.copy()
+        painter = QPainter(result)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(result.rect(), color)
+        painter.end()
+        return result
 
 
 class FileListWidget(QWidget):
@@ -82,14 +112,12 @@ class FileListWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        logger.debug("Initializing FileListWidget")
         self.setup_ui()
         self.file_model = None
         self.current_file_types = None
         
     def setup_ui(self):
         """Set up the UI components."""
-        logger.debug("Setting up FileListWidget UI")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -143,25 +171,21 @@ class FileListWidget(QWidget):
             model: The FileSystemModel
             file_types: List of file types to show (e.g., ['image', 'video'])
         """
-        logger.debug(f"Setting file model in FileListWidget with file types: {file_types}")
         self.file_model = model
         self.current_file_types = file_types
         self.update_view()
         
     def update_view(self):
         """Update the view with the current files."""
-        logger.debug("Updating view in FileListWidget")
         self.list_widget.clear()
         
         if not self.file_model:
-            logger.warning("No file model set")
             self.status_label.setText("No files found")
             return
             
         files = self.file_model.get_files()
         
         if not files:
-            logger.warning("No files found in model")
             self.status_label.setText("No files found on the SD card")
             return
             
@@ -191,8 +215,6 @@ class FileListWidget(QWidget):
             widget = FileListItem(file_info)
             item.setSizeHint(widget.sizeHint())
             self.list_widget.setItemWidget(item, widget)
-        
-        logger.debug(f"List widget updated with {self.list_widget.count()} items")
             
     def _handle_item_clicked(self, item):
         """Handle item click event.
@@ -202,5 +224,4 @@ class FileListWidget(QWidget):
         """
         widget = self.list_widget.itemWidget(item)
         if widget and hasattr(widget, 'file_info'):
-            logger.debug(f"Item clicked: {widget.file_info.get('name', 'unknown')}")
             self.file_selected.emit(widget.file_info) 

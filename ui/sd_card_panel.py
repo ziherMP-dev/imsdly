@@ -1,30 +1,21 @@
-import logging
 import os
 from typing import List, Dict, Any, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QStatusBar, QFrame, QButtonGroup
+    QPushButton, QStatusBar, QFrame, QButtonGroup, QComboBox
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 
 from models.file_system import FileSystemModel
 from ui.widgets.sd_card.file_list import FileListWidget
-
-# Set up logging
-logger = logging.getLogger(__name__)
 
 class SDCardPanel(QWidget):
     """Panel for displaying SD card contents and providing file operations."""
     
     def __init__(self, parent=None):
-        """Initialize the SD card panel.
-        
-        Args:
-            parent: Parent widget
-        """
+        """Initialize the SD card panel."""
         super().__init__(parent)
-        logger.debug("Initializing SDCardPanel")
         self.selected_card = None
         self.file_model: Optional[FileSystemModel] = None
         self.card_info: Optional[Dict] = None
@@ -33,7 +24,6 @@ class SDCardPanel(QWidget):
         
     def _setup_ui(self) -> None:
         """Set up the UI components."""
-        logger.debug("Setting up SDCardPanel UI")
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 10, 10, 10)
         
@@ -131,6 +121,53 @@ class SDCardPanel(QWidget):
         # Spacer
         control_bar.addStretch()
         
+        # Sort controls
+        sort_label = QLabel("Sort by:")
+        sort_label.setStyleSheet("color: #888;")
+        control_bar.addWidget(sort_label)
+        
+        # Sort combobox
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(["Name", "Size", "Type"])
+        self.sort_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #333;
+                color: white;
+                border: none;
+                padding: 4px 8px;
+                border-radius: 4px;
+                min-width: 80px;
+            }
+            QComboBox:hover {
+                background-color: #444;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #333;
+                color: white;
+                border: 1px solid #555;
+                selection-background-color: #0d6efd;
+            }
+        """)
+        control_bar.addWidget(self.sort_combo)
+        
+        # Sort order button
+        self.sort_order_button = QPushButton("↑")
+        self.sort_order_button.setToolTip("Sort ascending")
+        self.sort_order_button.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: white;
+                border: none;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #444;
+            }
+        """)
+        control_bar.addWidget(self.sort_order_button)
+        
         layout.addLayout(control_bar)
         
         # Add separator
@@ -167,14 +204,16 @@ class SDCardPanel(QWidget):
         self.scan_button.clicked.connect(self._handle_scan_clicked)
         self.filter_group.buttonClicked.connect(self._handle_filter_changed)
         
+        # Connect sort controls
+        self.sort_combo.currentTextChanged.connect(self._handle_sort_changed)
+        self.sort_order_button.clicked.connect(self._handle_sort_order_changed)
+        
     def _handle_filter_changed(self, button: QPushButton) -> None:
         """Handle filter button click.
         
         Args:
             button: The clicked filter button
         """
-        logger.debug(f"Filter changed: {button.text()}")
-        
         # Update filter status label
         active_filters = []
         if self.photos_button.isChecked():
@@ -232,13 +271,79 @@ class SDCardPanel(QWidget):
                 
             self.status_label.setText(f"Found {len(files)} files ({', '.join(status_parts)})")
         
+    def _handle_sort_changed(self, sort_text: str) -> None:
+        """Handle sort selection change.
+        
+        Args:
+            sort_text: The selected sort option text
+        """
+        if not self.file_model:
+            return
+            
+        # Map UI text to model sort key
+        sort_map = {
+            "Name": "name",
+            "Size": "size",
+            "Type": "type"
+        }
+        
+        # Get sort order from button
+        sort_order = "desc" if self.sort_order_button.text() == "↓" else "asc"
+        
+        # Apply sorting
+        self.file_model.sort_files(sort_map[sort_text], sort_order)
+        
+        # Update file list with current filters
+        file_types = []
+        if self.photos_button.isChecked():
+            file_types.append('image')
+        if self.videos_button.isChecked():
+            file_types.append('video')
+            
+        self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
+            
+    def _handle_sort_order_changed(self) -> None:
+        """Toggle sort direction between ascending and descending."""
+        if not self.file_model:
+            return
+            
+        # Toggle button text
+        is_ascending = self.sort_order_button.text() == "↑"
+        if is_ascending:
+            self.sort_order_button.setText("↓")
+            self.sort_order_button.setToolTip("Sort descending")
+            sort_order = "desc"
+        else:
+            self.sort_order_button.setText("↑")
+            self.sort_order_button.setToolTip("Sort ascending")
+            sort_order = "asc"
+            
+        # Get current sort key from combo box
+        sort_map = {
+            "Name": "name",
+            "Size": "size",
+            "Type": "type"
+        }
+        sort_key = sort_map[self.sort_combo.currentText()]
+        
+        # Apply sorting
+        self.file_model.sort_files(sort_key, sort_order)
+        
+        # Update file list with current filters
+        file_types = []
+        if self.photos_button.isChecked():
+            file_types.append('image')
+        if self.videos_button.isChecked():
+            file_types.append('video')
+            
+        self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
+        
     def _handle_card_selected(self, card_info: Dict[str, Any]) -> None:
         """Handle SD card selection.
         
         Args:
             card_info: Dictionary containing information about the selected card
         """
-        logger.debug(f"SDCardPanel._handle_card_selected: {card_info}")
         self.selected_card = card_info
         self.content_header.setText(f"Content of {card_info.get('name', 'SD Card')}")
         self.status_label.setText(f"Selected: {card_info.get('name', 'SD Card')} ({card_info.get('path', '')})")
@@ -300,33 +405,23 @@ class SDCardPanel(QWidget):
         Args:
             card_info: Dictionary containing card information
         """
-        logger.debug(f"SDCardPanel.set_card_info: {card_info}")
         self.card_info = card_info
         
         # Check if the card has a valid path
         if 'path' not in card_info or not card_info['path']:
-            logger.warning("Card info missing path")
             return
         
         path = card_info['path']
         # Verify the path exists
         if not os.path.exists(path):
-            logger.warning(f"Card path does not exist: {path}")
             return
             
         # Create file system model and scan for files
-        logger.debug(f"Creating FileSystemModel with path: {path}")
         self.file_model = FileSystemModel(path)
         self.file_model.scan_directory()
         
         # Get file count for debugging
         file_count = len(self.file_model.get_files())
-        logger.debug(f"Found {file_count} files in {path}")
         
         # Update file list widget with model, defaulting to media files
-        logger.debug("Updating file list widget with model")
-        self.file_list.set_file_model(self.file_model, file_types=['image', 'video'])
-        
-        # Log the file list state
-        logger.debug(f"File list visible: {self.file_list.isVisible()}")
-        logger.debug(f"File list widget count: {self.file_list.list_widget.count()}") 
+        self.file_list.set_file_model(self.file_model, file_types=['image', 'video']) 
