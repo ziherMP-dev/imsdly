@@ -121,6 +121,22 @@ class SDCardPanel(QWidget):
         # Spacer
         control_bar.addStretch()
         
+        # View mode toggle button
+        self.view_mode_button = QPushButton("Icon View")
+        self.view_mode_button.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #444;
+            }
+        """)
+        control_bar.addWidget(self.view_mode_button)
+        
         # Sort controls
         sort_label = QLabel("Sort by:")
         sort_label.setStyleSheet("color: #888;")
@@ -199,6 +215,9 @@ class SDCardPanel(QWidget):
         # Set dark background
         self.setStyleSheet("background-color: #1e1e1e;")
         
+        # Track current view mode
+        self.current_view_mode = self.file_list.LIST_VIEW
+        
     def _connect_signals(self) -> None:
         """Connect UI signals to slots."""
         self.scan_button.clicked.connect(self._handle_scan_clicked)
@@ -207,6 +226,36 @@ class SDCardPanel(QWidget):
         # Connect sort controls
         self.sort_combo.currentTextChanged.connect(self._handle_sort_changed)
         self.sort_order_button.clicked.connect(self._handle_sort_order_changed)
+        
+        # Connect view mode toggle button
+        self.view_mode_button.clicked.connect(self._handle_view_mode_toggle)
+        
+    def _handle_view_mode_toggle(self) -> None:
+        """Toggle between list view and icon view."""
+        if self.current_view_mode == self.file_list.LIST_VIEW:
+            # Switch to icon view
+            self.current_view_mode = self.file_list.ICON_VIEW
+            self.view_mode_button.setText("List View")
+        else:
+            # Switch to list view
+            self.current_view_mode = self.file_list.LIST_VIEW
+            self.view_mode_button.setText("Icon View")
+            
+        # Update the file list view mode
+        self.file_list.set_view_mode(self.current_view_mode)
+        
+        # Print debug info
+        try:
+            import rawpy
+            print("\n--- RAW SUPPORT INFO ---")
+            print(f"rawpy version: {rawpy.__version__}")
+            print("RawPy is available and should support common RAW formats")
+            # List some common formats that should be supported
+            print("Commonly supported formats include: CR2, NEF, ARW, DNG, etc.")
+            print("------------------------\n")
+        except Exception as e:
+            print(f"Error getting RAW support info: {str(e)}")
+            print("Make sure rawpy is installed: pip install rawpy")
         
     def _handle_filter_changed(self, button: QPushButton) -> None:
         """Handle filter button click.
