@@ -61,7 +61,7 @@ class SDCardPanel(QWidget):
                 background-color: #0b5ed7;
             }
             QPushButton:disabled {
-                background-color: #6c757d;
+                background-color: #1a1a3d;
                 color: #dee2e6;
             }
         """)
