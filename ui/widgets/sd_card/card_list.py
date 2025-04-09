@@ -308,4 +308,18 @@ class SDCardListWidget(QWidget):
         Returns:
             Optional[Dict[str, Any]]: Information about the selected card, or None if no card is selected
         """
-        return self.selected_card 
+        return self.selected_card
+
+    def get_cards(self):
+        """Get a list of all currently detected SD cards.
+        
+        Returns:
+            list: List of card info dictionaries
+        """
+        cards = []
+        for i in range(self.cards_layout.count()):
+            item = self.cards_layout.itemAt(i)
+            widget = item.widget()
+            if widget and hasattr(widget, 'card_info'):
+                cards.append(widget.card_info)
+        return cards 

@@ -1,9 +1,14 @@
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QStatusBar, QSizeGrip, QStackedWidget, QLabel, QPushButton
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QTimer
 from .widgets.title_bar import TitleBar
 from .widgets.side_bar import SideBar
 from .styles.dark_theme import MAIN_WINDOW_STYLE, CONTENT_AREA_STYLE
 from .sd_card_panel import SDCardPanel
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -157,6 +162,9 @@ class MainWindow(QMainWindow):
             self.sidebar.sd_card_list.sd_detector.card_inserted.connect(self._handle_card_inserted)
             # Connect to card_removed signal to switch to no card view when needed
             self.sidebar.sd_card_list.sd_detector.card_removed.connect(self._handle_card_removed)
+        
+        # Initialize SD cards after UI setup is complete
+        QTimer.singleShot(500, self.initialize_sd_cards)
     
     def _handle_card_selected(self, card_info: dict) -> None:
         """
@@ -165,10 +173,21 @@ class MainWindow(QMainWindow):
         Args:
             card_info: Dictionary containing information about the selected card
         """
-        # Switch to SD card panel since a card is now selected
+        logger.debug(f"Card selected in main window: {card_info}")
+        
+        # Show SD card panel
         self.stacked_widget.setCurrentWidget(self.sd_card_panel)
+        
         # Update status bar
-        self.statusBar().showMessage(f"Selected SD card: {card_info.get('name', 'Unknown Card')}", 2000)
+        self.statusBar().showMessage(f"Selected SD card: {card_info.get('name', 'Unknown')}", 2000)
+        
+        # Set the card info in the panel
+        logger.debug("Setting card info in SD card panel")
+        self.sd_card_panel.set_card_info(card_info)
+        
+        # Log panel state
+        logger.debug(f"SD card panel visible: {self.sd_card_panel.isVisible()}")
+        logger.debug(f"Current widget in stack: {self.stacked_widget.currentWidget().__class__.__name__}")
 
     def _handle_card_inserted(self, card_info: dict) -> None:
         """
@@ -276,4 +295,40 @@ class MainWindow(QMainWindow):
     def handle_browse_files(self):
         """Handle Browse Files button click"""
         self.stacked_widget.setCurrentWidget(self.browse_files_panel)
-        self.statusBar().showMessage("Browse Files view activated", 2000) 
+        self.statusBar().showMessage("Browse Files view activated", 2000)
+
+    def _handle_sidebar_sd_card_added(self, card_info):
+        """Handle SD card added event from sidebar.
+        
+        Args:
+            card_info: Dictionary containing information about the added card
+        """
+        logger.debug(f"SD card added: {card_info}")
+        self.statusBar().showMessage(f"SD card detected: {card_info.get('name', 'Unknown')}")
+        
+        # If this is the first card detected, automatically select it
+        sd_cards = self.sidebar.sd_card_list.get_cards()
+        if len(sd_cards) == 1:
+            logger.debug("Automatically selecting first SD card")
+            self._handle_card_selected(card_info)
+            
+    def initialize_sd_cards(self):
+        """Initialize any SD cards that are already mounted at startup."""
+        logger.debug("Initializing SD cards at startup")
+        
+        # Get all currently mounted SD cards
+        sd_cards = self.sidebar.sd_card_list.get_cards()
+        
+        if sd_cards:
+            logger.debug(f"Found {len(sd_cards)} SD cards at startup")
+            # Automatically select the first card
+            self._handle_card_selected(sd_cards[0])
+        else:
+            logger.debug("No SD cards found at startup")
+            
+    def _initialize_ui(self):
+        """Initialize the UI components."""
+        # Existing initialization code...
+        
+        # Initialize SD cards after UI setup is complete
+        QTimer.singleShot(500, self.initialize_sd_cards) 

@@ -37,6 +37,7 @@
 5.2. Implement functions to read file metadata (date taken, size, type)
 5.3. Create a view to display the files in a list or grid format
 5.4. Test browsing files on a connected SD card
+5.5. Handling corrupted files (display, notification)
 
 ## Phase 3: File Preview & Selection
 
