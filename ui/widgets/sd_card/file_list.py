@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QHBoxLayout, QSizePolicy, QStyle, QAbstractItemView, QFrame, QToolTip
+    QHBoxLayout, QSizePolicy, QStyle, QAbstractItemView, QFrame, QToolTip, QApplication
 )
 from PyQt6.QtCore import (
     Qt, pyqtSignal, QSize, QPoint, QByteArray, QFileInfo, QDateTime,
@@ -691,45 +691,78 @@ class FileIconItem(QWidget):
         filename = self.file_info['name']
         ext = os.path.splitext(filename)[1].lower()
         
+        # Draw a rounded rectangle background
+        painter.setPen(QPen(QColor(50, 50, 50), 1))
+        painter.setBrush(QBrush(QColor(40, 40, 40)))
+        painter.drawRoundedRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, 6, 6)
+        
         if file_type == 'image':
             # For image files
             gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
             gradient.setColorAt(0, QColor(30, 30, 40))
             gradient.setColorAt(1, QColor(34, 34, 44))
-            painter.fillRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, gradient)
+            painter.fillRect(2, 2, self.THUMB_WIDTH-4, self.THUMB_HEIGHT-4, gradient)
             
-            # Draw icon
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-            icon_pixmap = icon.pixmap(48, 48)
+            # Create "image placeholder" icon with frame
+            painter.setPen(QPen(QColor(80, 80, 100), 1))
+            painter.setBrush(QBrush(QColor(52, 152, 219, 40)))  # Light blue with transparency
             
-            # Apply color tint - blue for images
-            icon_painter = QPainter(icon_pixmap)
-            icon_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-            icon_painter.fillRect(icon_pixmap.rect(), QColor(52, 152, 219))
-            icon_painter.end()
+            # Convert floats to integers for the rect
+            frame_x = int(self.THUMB_WIDTH/4)
+            frame_y = int(self.THUMB_HEIGHT/4)
+            frame_width = int(self.THUMB_WIDTH/2)
+            frame_height = int(self.THUMB_HEIGHT/2)
+            painter.drawRoundedRect(frame_x, frame_y, frame_width, frame_height, 4, 4)
             
-            # Draw in center
-            painter.drawPixmap(
-                (self.THUMB_WIDTH - icon_pixmap.width()) // 2,
-                (self.THUMB_HEIGHT - icon_pixmap.height()) // 2,
-                icon_pixmap
-            )
+            # Add mountain icon for photos
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(52, 152, 219)))
+            
+            # Draw a stylized mountain
+            mountains = QPolygon([
+                QPoint(int(self.THUMB_WIDTH/4), int(self.THUMB_HEIGHT*3/4)),
+                QPoint(int(self.THUMB_WIDTH*3/8), int(self.THUMB_HEIGHT*2/4)),
+                QPoint(int(self.THUMB_WIDTH/2), int(self.THUMB_HEIGHT*2.5/4)),
+                QPoint(int(self.THUMB_WIDTH*5/8), int(self.THUMB_HEIGHT*1.5/4)),
+                QPoint(int(self.THUMB_WIDTH*3/4), int(self.THUMB_HEIGHT*2/4)),
+                QPoint(int(self.THUMB_WIDTH*3/4), int(self.THUMB_HEIGHT*3/4)),
+            ])
+            painter.drawPolygon(mountains)
+            
+            # Draw a sun
+            sun_x = int(self.THUMB_WIDTH*5/8)
+            sun_y = int(self.THUMB_HEIGHT/4)
+            sun_size = int(self.THUMB_WIDTH/8)
+            painter.setBrush(QBrush(QColor(241, 196, 15)))
+            painter.drawEllipse(sun_x, sun_y, sun_size, sun_size)
             
             # Draw extension
             if ext in ['.heic', '.heif', '.raw', '.cr2', '.nef', '.arw', '.dng']:
-                # Highlight special formats
+                # Highlight special formats with badge
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(41, 128, 185, 220)))
+                badge_x = self.THUMB_WIDTH - 40
+                badge_y = self.THUMB_HEIGHT - 20
+                painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+                
                 painter.setPen(QColor(255, 255, 255))
-                painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-                painter.drawText(pixmap.rect().adjusted(0, self.THUMB_HEIGHT - 30, 0, 0), 
-                                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, 
-                                ext[1:].upper())
+                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+                badge_rect = QRect(badge_x, badge_y, 36, 16)
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext[1:].upper())
             
         elif file_type == 'video':
             # For video files
             gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
             gradient.setColorAt(0, QColor(40, 30, 30))
             gradient.setColorAt(1, QColor(44, 34, 34))
-            painter.fillRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, gradient)
+            painter.fillRect(2, 2, self.THUMB_WIDTH-4, self.THUMB_HEIGHT-4, gradient)
+            
+            # Draw film strip borders
+            painter.setPen(QPen(QColor(231, 76, 60), 1))
+            for y in range(5, self.THUMB_HEIGHT-5, 12):
+                # Draw film strip holes
+                painter.drawRect(5, y, 8, 6)
+                painter.drawRect(self.THUMB_WIDTH-13, y, 8, 6)
             
             # Draw play triangle
             painter.setPen(Qt.PenStyle.NoPen)
@@ -737,55 +770,88 @@ class FileIconItem(QWidget):
             
             # Create play button triangle
             play_triangle = QPolygon([
-                QPoint(self.THUMB_WIDTH // 2 - 25, self.THUMB_HEIGHT // 2 - 25),
-                QPoint(self.THUMB_WIDTH // 2 + 25, self.THUMB_HEIGHT // 2),
-                QPoint(self.THUMB_WIDTH // 2 - 25, self.THUMB_HEIGHT // 2 + 25)
+                QPoint(self.THUMB_WIDTH // 2 - 15, self.THUMB_HEIGHT // 2 - 15),
+                QPoint(self.THUMB_WIDTH // 2 + 15, self.THUMB_HEIGHT // 2),
+                QPoint(self.THUMB_WIDTH // 2 - 15, self.THUMB_HEIGHT // 2 + 15)
             ])
             painter.drawPolygon(play_triangle)
             
-            # Draw "VIDEO" text
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-            painter.drawText(pixmap.rect().adjusted(0, self.THUMB_HEIGHT - 25, 0, 0), 
-                            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, 
-                            "VIDEO")
+            # Draw badge with video duration if available
+            duration = self.file_info.get('duration', 0)
+            if duration > 0:
+                mins = int(duration / 60)
+                secs = int(duration % 60)
+                duration_text = f"{mins}:{secs:02d}"
+                
+                # Draw badge background
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(0, 0, 0, 180)))
+                badge_x = self.THUMB_WIDTH - 44
+                badge_y = self.THUMB_HEIGHT - 20
+                painter.drawRoundedRect(badge_x, badge_y, 40, 16, 4, 4)
+                
+                # Draw duration text
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 8))
+                badge_rect = QRect(badge_x, badge_y, 40, 16)
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, duration_text)
+            else:
+                # Draw "VIDEO" badge
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(231, 76, 60, 180)))
+                badge_x = self.THUMB_WIDTH - 44
+                badge_y = self.THUMB_HEIGHT - 20
+                painter.drawRoundedRect(badge_x, badge_y, 40, 16, 4, 4)
+                
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+                badge_rect = QRect(badge_x, badge_y, 40, 16)
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "VIDEO")
         else:
             # For other files
             gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
             gradient.setColorAt(0, QColor(30, 35, 30))
             gradient.setColorAt(1, QColor(34, 39, 34))
-            painter.fillRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, gradient)
+            painter.fillRect(2, 2, self.THUMB_WIDTH-4, self.THUMB_HEIGHT-4, gradient)
             
-            # Draw icon
-            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
-            icon_pixmap = icon.pixmap(48, 48)
+            # Draw document icon
+            painter.setPen(QPen(QColor(100, 100, 100), 1))
+            painter.setBrush(QBrush(QColor(60, 60, 60)))
             
-            # Apply color tint - gray for generic files
-            icon_painter = QPainter(icon_pixmap)
-            icon_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-            icon_painter.fillRect(icon_pixmap.rect(), QColor(149, 165, 166))
-            icon_painter.end()
+            # Document shape
+            doc_x = self.THUMB_WIDTH//2 - 20
+            doc_y = self.THUMB_HEIGHT//2 - 25
+            doc_rect = QRect(doc_x, doc_y, 40, 50)
+            painter.drawRect(doc_rect)
             
-            # Draw in center
-            painter.drawPixmap(
-                (self.THUMB_WIDTH - icon_pixmap.width()) // 2,
-                (self.THUMB_HEIGHT - icon_pixmap.height()) // 2,
-                icon_pixmap
-            )
+            # Document lines
+            painter.setPen(QPen(QColor(120, 120, 120), 1))
+            for y_offset in range(10, 40, 8):
+                painter.drawLine(
+                    doc_rect.left() + 5, 
+                    doc_rect.top() + y_offset,
+                    doc_rect.right() - 5, 
+                    doc_rect.top() + y_offset
+                )
             
             # Draw extension text
             if ext:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(80, 80, 80, 180)))
+                badge_x = self.THUMB_WIDTH//2 - 16
+                badge_y = self.THUMB_HEIGHT//2 + 12
+                painter.drawRoundedRect(badge_x, badge_y, 32, 16, 4, 4)
+                    
                 painter.setPen(QColor(255, 255, 255))
-                painter.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-                painter.drawText(pixmap.rect().adjusted(0, self.THUMB_HEIGHT - 25, 0, 0), 
-                                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, 
-                                ext[1:].upper())
+                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+                badge_rect = QRect(badge_x, badge_y, 32, 16)
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext[1:].upper())
         
-        # Add subtle "loading" indicator
+        # Add subtle "loading" indicator at bottom
         painter.setPen(QPen(QColor(255, 255, 255, 100), 1))
-        painter.drawText(pixmap.rect().adjusted(0, 10, 0, 0), 
-                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, 
-                        "Loading...")
+        painter.setFont(QFont("Arial", 7))
+        loading_rect = QRect(0, self.THUMB_HEIGHT - 15, self.THUMB_WIDTH, 10)
+        painter.drawText(loading_rect, Qt.AlignmentFlag.AlignCenter, "Loading thumbnail...")
         
         painter.end()
         
@@ -970,7 +1036,7 @@ class FileListWidget(QWidget):
         # Loading progress indicator
         self.loading_label = QLabel()
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.loading_label.setStyleSheet("color: #aaa; font-size: 10px;")
+        self.loading_label.setStyleSheet("color: #1e1e1e; font-size: 10px;")
         self.loading_label.hide()  # Hidden by default
         top_bar.addWidget(self.loading_label)
         
@@ -1030,8 +1096,9 @@ class FileListWidget(QWidget):
         # Get visible items
         visible_rect = self.list_widget.viewport().rect()
         self.visible_items = []
+        pending_items = []
         
-        # Iterate through all items
+        # First pass: find all visible items
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             item_rect = self.list_widget.visualItemRect(item)
@@ -1041,13 +1108,73 @@ class FileListWidget(QWidget):
                 widget = self.list_widget.itemWidget(item)
                 if widget and isinstance(widget, FileIconItem) and not widget.thumbnail_loaded:
                     self.visible_items.append(widget)
+                    pending_items.append((widget, item_rect))
+        
+        # Sort items by distance from center of viewport for better user experience
+        center_y = visible_rect.center().y()
+        pending_items.sort(key=lambda x: abs(x[1].center().y() - center_y))
+        
+        # Second pass: request thumbnails in batches with a slight delay between batches
+        # to keep the UI responsive
+        batch_size = 5  # Process 5 items at a time
+        for batch_index, batch in enumerate(
+            [pending_items[i:i+batch_size] for i in range(0, len(pending_items), batch_size)]
+        ):
+            # For the first batch, load immediately
+            delay = 0 if batch_index == 0 else batch_index * 50  # 50ms delay between batches
+            
+            # Use a lambda that captures the current batch
+            def load_batch(items_to_load=batch):
+                for widget, _ in items_to_load:
+                    if not widget.thumbnail_loaded:
+                        # Request thumbnail with high priority
+                        THUMBNAIL_MANAGER.get_async(
+                            widget.file_info['path'],
+                            QSize(widget.THUMB_WIDTH, widget.THUMB_HEIGHT),
+                            lambda key, pixmap, w=widget: self._handle_thumbnail_loaded(key, pixmap, w)
+                        )
+            
+            # Schedule this batch
+            QTimer.singleShot(delay, load_batch)
+            
+        # If there are no visible items needing thumbnails, check the next screen worth of items
+        if not self.visible_items:
+            # Find the first item below the viewport and request its thumbnail
+            found_below = False
+            for i in range(self.list_widget.count()):
+                item = self.list_widget.item(i)
+                item_rect = self.list_widget.visualItemRect(item)
+                
+                # Check if item is below the visible area
+                if item_rect.top() > visible_rect.bottom():
+                    widget = self.list_widget.itemWidget(item)
+                    if widget and isinstance(widget, FileIconItem) and not widget.thumbnail_loaded:
+                        # Request this thumbnail to prepare for scrolling down
+                        THUMBNAIL_MANAGER.get_async(
+                            widget.file_info['path'],
+                            QSize(widget.THUMB_WIDTH, widget.THUMB_HEIGHT),
+                            lambda key, pixmap, w=widget: self._handle_thumbnail_loaded(key, pixmap, w)
+                        )
+                        found_below = True
+                        break
+            
+            # If we didn't find any below, check for ones above (for scrolling up)
+            if not found_below:
+                for i in range(self.list_widget.count()-1, -1, -1):
+                    item = self.list_widget.item(i)
+                    item_rect = self.list_widget.visualItemRect(item)
                     
-                    # Request thumbnail with high priority
-                    THUMBNAIL_MANAGER.get_async(
-                        widget.file_info['path'],
-                        QSize(widget.THUMB_WIDTH, widget.THUMB_HEIGHT),
-                        lambda key, pixmap: self._handle_thumbnail_loaded(key, pixmap, widget)
-                    )
+                    # Check if item is above the visible area
+                    if item_rect.bottom() < visible_rect.top():
+                        widget = self.list_widget.itemWidget(item)
+                        if widget and isinstance(widget, FileIconItem) and not widget.thumbnail_loaded:
+                            # Request this thumbnail to prepare for scrolling up
+                            THUMBNAIL_MANAGER.get_async(
+                                widget.file_info['path'],
+                                QSize(widget.THUMB_WIDTH, widget.THUMB_HEIGHT),
+                                lambda key, pixmap, w=widget: self._handle_thumbnail_loaded(key, pixmap, w)
+                            )
+                            break
     
     def _handle_thumbnail_loaded(self, key, pixmap, widget):
         """Handle when a thumbnail is loaded."""
@@ -1086,7 +1213,17 @@ class FileListWidget(QWidget):
         if mode not in [self.LIST_VIEW, self.ICON_VIEW]:
             return
             
+        # Store current view mode for comparison
+        old_mode = self.view_mode
         self.view_mode = mode
+        
+        # If switching to icon view, show a brief loading message
+        if mode == self.ICON_VIEW and old_mode != self.ICON_VIEW:
+            self.loading_label.setText("Switching to icon view...")
+            self.loading_label.show()
+            
+        # Force immediate processing of events to update UI
+        QApplication.processEvents()
         
         # Update the list widget view mode
         if mode == self.ICON_VIEW:
@@ -1160,14 +1297,20 @@ class FileListWidget(QWidget):
                     background: #555;
                 }
             """)
+        
+        # Force immediate processing of events to update styling
+        QApplication.processEvents()
             
         # Refresh the view if we have a model
         if self.file_model:
-            self.update_view()
+            # If we've already populated the view, clear only when switching modes
+            # to avoid flickering when toggling between the same mode
+            if old_mode != mode:
+                self.update_view()
             
-        # Load visible thumbnails if in icon view
+        # Load visible thumbnails if in icon view - do this immediately but with a low delay
         if mode == self.ICON_VIEW:
-            QTimer.singleShot(100, self._load_visible_thumbnails)
+            QTimer.singleShot(50, self._load_visible_thumbnails)
     
     def clear_thumbnail_cache(self):
         """Clear the thumbnail cache."""
@@ -1254,15 +1397,23 @@ class FileListWidget(QWidget):
                 self._handle_thumbnail_status_changed(None, None)
                 
             self.list_widget.setItemWidget(item, widget)
+            
+            # Force UI update periodically to show progress
+            if self.list_widget.count() % 20 == 0:  # Update every 20 items
+                QApplication.processEvents()
         
         # If no pending thumbnails, consider loading complete
         if self.pending_thumbnails == 0:
             self.is_loading = False
             self.loading_label.hide()
         
-        # Load visible thumbnails after a short delay
+        # Force a final UI update to show all items before starting thumbnail loading
+        QApplication.processEvents()
+        
+        # Load visible thumbnails immediately for a better user experience
         if self.view_mode == self.ICON_VIEW:
-            QTimer.singleShot(100, self._load_visible_thumbnails)
+            # Load immediately, but in a non-blocking way
+            QTimer.singleShot(10, self._load_visible_thumbnails)
             
     def _handle_item_clicked(self, item):
         """Handle item click event.

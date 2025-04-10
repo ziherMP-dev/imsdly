@@ -2,3 +2,6 @@ Proceed only step 1.
 Don't make any unnesessary changes, only those needed for implementation step
 When creating new code remember to keep code not so long in each file, if possible add new function/module in separate file
 if there is any major UI change to make ask before changing code
+
+
+.\venv\Scripts\Activate.ps1

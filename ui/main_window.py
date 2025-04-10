@@ -180,9 +180,6 @@ class MainWindow(QMainWindow):
         # Switch to SD card panel
         self.stacked_widget.setCurrentWidget(self.sd_card_panel)
         
-        # Update status bar
-        self.statusBar().showMessage(f"Selected SD card: {card_info.get('name', 'Unknown')}", 2000)
-        
         # Store as selected card in the list widget
         if hasattr(self.sidebar, 'sd_card_list'):
             self.sidebar.sd_card_list.selected_card = card_info

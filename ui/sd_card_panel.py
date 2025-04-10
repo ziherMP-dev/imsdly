@@ -2,7 +2,7 @@ import os
 from typing import List, Dict, Any, Optional
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QStatusBar, QFrame, QButtonGroup, QComboBox
+    QPushButton, QFrame, QButtonGroup, QComboBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
@@ -121,21 +121,60 @@ class SDCardPanel(QWidget):
         # Spacer
         control_bar.addStretch()
         
-        # View mode toggle button
-        self.view_mode_button = QPushButton("Icon View")
-        self.view_mode_button.setStyleSheet("""
+        # View mode buttons
+        view_buttons_layout = QHBoxLayout()
+        view_buttons_layout.setSpacing(0)
+        
+        # Create button group for view mode buttons
+        self.view_mode_group = QButtonGroup()
+        self.view_mode_group.setExclusive(True)
+        
+        # List view button
+        self.list_view_button = QPushButton("List")
+        self.list_view_button.setCheckable(True)
+        self.list_view_button.setChecked(True)  # Default to list view
+        self.list_view_button.setStyleSheet("""
             QPushButton {
                 background-color: #333;
                 color: white;
                 border: none;
                 padding: 6px 12px;
-                border-radius: 4px;
+                border-top-left-radius: 4px;
+                border-bottom-left-radius: 4px;
             }
-            QPushButton:hover {
+            QPushButton:checked {
+                background-color: #0d6efd;
+            }
+            QPushButton:hover:!checked {
                 background-color: #444;
             }
         """)
-        control_bar.addWidget(self.view_mode_button)
+        self.view_mode_group.addButton(self.list_view_button)
+        view_buttons_layout.addWidget(self.list_view_button)
+        
+        # Icon view button
+        self.icon_view_button = QPushButton("Thumbnails")
+        self.icon_view_button.setCheckable(True)
+        self.icon_view_button.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }
+            QPushButton:checked {
+                background-color: #0d6efd;
+            }
+            QPushButton:hover:!checked {
+                background-color: #444;
+            }
+        """)
+        self.view_mode_group.addButton(self.icon_view_button)
+        view_buttons_layout.addWidget(self.icon_view_button)
+        
+        control_bar.addLayout(view_buttons_layout)
         
         # Sort controls
         sort_label = QLabel("Sort by:")
@@ -193,21 +232,9 @@ class SDCardPanel(QWidget):
         separator.setStyleSheet("background-color: #444;")
         layout.addWidget(separator)
         
-        # Status bar
-        status_bar = QStatusBar()
-        self.status_label = QLabel("No SD card selected")
-        status_bar.addWidget(self.status_label)
-        status_bar.setStyleSheet("""
-            QStatusBar {
-                background-color: #333;
-                color: #ccc;
-            }
-        """)
-        
-        layout.addWidget(status_bar)
-        
         # Create file list widget
         self.file_list = FileListWidget()
+        self.file_list.file_selected.connect(self._handle_file_selected)
         layout.addWidget(self.file_list)
         
         self.setLayout(layout)
@@ -215,8 +242,15 @@ class SDCardPanel(QWidget):
         # Set dark background
         self.setStyleSheet("background-color: #1e1e1e;")
         
-        # Track current view mode
+        # Track current view mode - matching the default button state (list view)
         self.current_view_mode = self.file_list.LIST_VIEW
+        
+        # Initialize file model as None until a card is selected
+        self.file_model = None
+        
+        # Set up initial state
+        self.selected_card = None
+        self._update_filter_buttons()
         
     def _connect_signals(self) -> None:
         """Connect UI signals to slots."""
@@ -227,22 +261,25 @@ class SDCardPanel(QWidget):
         self.sort_combo.currentTextChanged.connect(self._handle_sort_changed)
         self.sort_order_button.clicked.connect(self._handle_sort_order_changed)
         
-        # Connect view mode toggle button
-        self.view_mode_button.clicked.connect(self._handle_view_mode_toggle)
+        # Connect view mode buttons
+        self.list_view_button.clicked.connect(lambda: self._handle_view_mode_changed(self.file_list.LIST_VIEW))
+        self.icon_view_button.clicked.connect(lambda: self._handle_view_mode_changed(self.file_list.ICON_VIEW))
         
-    def _handle_view_mode_toggle(self) -> None:
-        """Toggle between list view and icon view."""
-        if self.current_view_mode == self.file_list.LIST_VIEW:
-            # Switch to icon view
-            self.current_view_mode = self.file_list.ICON_VIEW
-            self.view_mode_button.setText("List View")
-        else:
-            # Switch to list view
-            self.current_view_mode = self.file_list.LIST_VIEW
-            self.view_mode_button.setText("Icon View")
-            
+    def _handle_view_mode_changed(self, mode: int) -> None:
+        """Handle view mode change.
+        
+        Args:
+            mode: The view mode to change to
+        """
+        # Update the current view mode
+        self.current_view_mode = mode
+        
+        # Update button states
+        self.list_view_button.setChecked(mode == self.file_list.LIST_VIEW)
+        self.icon_view_button.setChecked(mode == self.file_list.ICON_VIEW)
+        
         # Update the file list view mode
-        self.file_list.set_view_mode(self.current_view_mode)
+        self.file_list.set_view_mode(mode)
         
         # Print debug info
         try:
@@ -285,40 +322,8 @@ class SDCardPanel(QWidget):
             if self.videos_button.isChecked():
                 file_types.append('video')
                 
-            # Update status with what we're scanning for
-            scan_types = []
-            if 'image' in file_types:
-                scan_types.append("photos")
-            if 'video' in file_types:
-                scan_types.append("videos")
-                
-            if not file_types:
-                self.status_label.setText("Scanning all files...")
-                self.file_model.scan_directory()
-            else:
-                self.status_label.setText(f"Scanning {' and '.join(scan_types)}...")
-                self.file_model.scan_directory(file_types=file_types)
-            
-            # Update the file list with the scan results
-            self.file_list.set_file_model(self.file_model, file_types=file_types)
-            
-            # Update status with scan results
-            files = self.file_model.get_files()
-            if file_types:
-                files = [f for f in files if f['type'] in file_types]
-            
-            type_counts = {}
-            for file in files:
-                file_type = file['type']
-                type_counts[file_type] = type_counts.get(file_type, 0) + 1
-                
-            status_parts = []
-            if 'image' in type_counts:
-                status_parts.append(f"{type_counts['image']} photos")
-            if 'video' in type_counts:
-                status_parts.append(f"{type_counts['video']} videos")
-                
-            self.status_label.setText(f"Found {len(files)} files ({', '.join(status_parts)})")
+            # Update the file list with the current filters
+            self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
         
     def _handle_sort_changed(self, sort_text: str) -> None:
         """Handle sort selection change.
@@ -395,7 +400,6 @@ class SDCardPanel(QWidget):
         """
         self.selected_card = card_info
         self.content_header.setText(f"Content of {card_info.get('name', 'SD Card')}")
-        self.status_label.setText(f"Selected: {card_info.get('name', 'SD Card')} ({card_info.get('path', '')})")
         self.scan_button.setEnabled(True)
         
         # Set the card information and update the view
@@ -473,4 +477,48 @@ class SDCardPanel(QWidget):
         file_count = len(self.file_model.get_files())
         
         # Update file list widget with model, defaulting to media files
-        self.file_list.set_file_model(self.file_model, file_types=['image', 'video']) 
+        self.file_list.set_file_model(self.file_model, file_types=['image', 'video'])
+        
+        # Update filter buttons
+        self._update_filter_buttons()
+        
+    def _update_filter_buttons(self) -> None:
+        """Update the filter buttons based on the current file model."""
+        if self.file_model:
+            self.photos_button.setEnabled(True)
+            self.videos_button.setEnabled(True)
+        else:
+            self.photos_button.setEnabled(False)
+            self.videos_button.setEnabled(False)
+        
+        # Update filter status label
+        active_filters = []
+        if self.photos_button.isChecked():
+            active_filters.append("Photos")
+        if self.videos_button.isChecked():
+            active_filters.append("Videos")
+            
+        if not active_filters:
+            self.filter_status_label.setText("Showing: All Files")
+        elif len(active_filters) == 2:
+            self.filter_status_label.setText("Showing: All Media Files")
+        else:
+            self.filter_status_label.setText(f"Showing: {' and '.join(active_filters)}")
+        
+        # Update file list with current filters
+        file_types = []
+        if self.photos_button.isChecked():
+            file_types.append('image')
+        if self.videos_button.isChecked():
+            file_types.append('video')
+            
+        self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
+        
+    def _handle_file_selected(self, file_info: Dict[str, Any]) -> None:
+        """Handle file selection.
+        
+        Args:
+            file_info: Dictionary containing information about the selected file
+        """
+        # Handle file selection
+        print(f"Selected file: {file_info['name']}") 
