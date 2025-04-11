@@ -19,6 +19,9 @@ class SDCardPanel(QWidget):
         self.selected_card = None
         self.file_model: Optional[FileSystemModel] = None
         self.card_info: Optional[Dict] = None
+        # Track sorting preferences
+        self.current_sort_key = "name"
+        self.current_sort_order = "asc"
         self._setup_ui()
         self._connect_signals()
         
@@ -65,51 +68,139 @@ class SDCardPanel(QWidget):
         self.filter_group = QButtonGroup()
         self.filter_group.setExclusive(False)
         
-        # Photos button
-        self.photos_button = QPushButton("Photos")
+        # Photos button with small toggle
+        self.photos_button = QPushButton()
         self.photos_button.setCheckable(True)
         self.photos_button.setChecked(True)  # Set as default
-        self.photos_button.setStyleSheet("""
-            QPushButton {
-                background-color: #333;
-                color: white;
-                border: none;
-                padding: 6px 12px;
-                border-top-left-radius: 4px;
-                border-bottom-left-radius: 4px;
-            }
-            QPushButton:checked {
+        
+        photos_layout = QHBoxLayout()
+        photos_layout.setContentsMargins(8, 0, 8, 0)
+        photos_layout.setSpacing(6)
+        
+        # Create toggle switch widget
+        photos_toggle = QFrame()
+        photos_toggle.setFixedSize(28, 16)
+        photos_toggle.setStyleSheet("""
+            QFrame {
                 background-color: #0d6efd;
-            }
-            QPushButton:hover:!checked {
-                background-color: #444;
+                border-radius: 8px;
+                border: 1px solid #0d6efd;
             }
         """)
-        self.filter_group.addButton(self.photos_button)
-        filter_layout.addWidget(self.photos_button)
         
-        # Videos button
-        self.videos_button = QPushButton("Videos")
+        # Create toggle handle
+        photos_handle = QFrame(photos_toggle)
+        photos_handle.setFixedSize(14, 14)
+        photos_handle.move(12, 1)
+        photos_handle.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border-radius: 7px;
+            }
+        """)
+        
+        photos_layout.addWidget(photos_toggle)
+        
+        # Add label text
+        photos_label = QLabel("Photos")
+        photos_label.setStyleSheet("color: white;")
+        photos_layout.addWidget(photos_label)
+        
+        # Set custom widget as layout for button
+        photos_widget = QWidget()
+        photos_widget.setLayout(photos_layout)
+        
+        self.photos_toggle = photos_toggle
+        self.photos_handle = photos_handle
+        self.photos_label = photos_label
+        
+        # Create container widget with similar styling to previous buttons
+        photos_container = QFrame()
+        photos_container.setStyleSheet("""
+            QFrame {
+                background-color: transparent;
+                border: none;
+            }
+        """)
+        
+        photos_container_layout = QHBoxLayout(photos_container)
+        photos_container_layout.setContentsMargins(6, 6, 6, 6)
+        photos_container_layout.addWidget(photos_widget)
+        photos_container_layout.addStretch()
+        
+        # Add to filter layout
+        filter_layout.addWidget(photos_container)
+        
+        # Videos button with small toggle
+        self.videos_button = QPushButton()
         self.videos_button.setCheckable(True)
         self.videos_button.setChecked(True)  # Set as default
-        self.videos_button.setStyleSheet("""
-            QPushButton {
-                background-color: #333;
-                color: white;
-                border: none;
-                padding: 6px 12px;
-                border-top-right-radius: 4px;
-                border-bottom-right-radius: 4px;
-            }
-            QPushButton:checked {
+        
+        videos_layout = QHBoxLayout()
+        videos_layout.setContentsMargins(8, 0, 8, 0)
+        videos_layout.setSpacing(6)
+        
+        # Create toggle switch widget
+        videos_toggle = QFrame()
+        videos_toggle.setFixedSize(28, 16)
+        videos_toggle.setStyleSheet("""
+            QFrame {
                 background-color: #0d6efd;
-            }
-            QPushButton:hover:!checked {
-                background-color: #444;
+                border-radius: 8px;
+                border: 1px solid #0d6efd;
             }
         """)
-        self.filter_group.addButton(self.videos_button)
-        filter_layout.addWidget(self.videos_button)
+        
+        # Create toggle handle
+        videos_handle = QFrame(videos_toggle)
+        videos_handle.setFixedSize(14, 14)
+        videos_handle.move(12, 1)
+        videos_handle.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border-radius: 7px;
+            }
+        """)
+        
+        videos_layout.addWidget(videos_toggle)
+        
+        # Add label text
+        videos_label = QLabel("Videos")
+        videos_label.setStyleSheet("color: white;")
+        videos_layout.addWidget(videos_label)
+        
+        # Set custom widget as layout for button
+        videos_widget = QWidget()
+        videos_widget.setLayout(videos_layout)
+        
+        self.videos_toggle = videos_toggle
+        self.videos_handle = videos_handle
+        self.videos_label = videos_label
+        
+        # Create container widget with similar styling to previous buttons
+        videos_container = QFrame()
+        videos_container.setStyleSheet("""
+            QFrame {
+                background-color: transparent;
+                border: none;
+            }
+        """)
+        
+        videos_container_layout = QHBoxLayout(videos_container)
+        videos_container_layout.setContentsMargins(6, 6, 6, 6)
+        videos_container_layout.addWidget(videos_widget)
+        videos_container_layout.addStretch()
+        
+        # Add to filter layout
+        filter_layout.addWidget(videos_container)
+        
+        # Setup filter buttons
+        self.photos_container = photos_container
+        self.videos_container = videos_container
+        
+        # Connect mouse events for toggle switches
+        photos_container.mousePressEvent = lambda e: self._toggle_photos()
+        videos_container.mousePressEvent = lambda e: self._toggle_videos()
         
         control_bar.addLayout(filter_layout)
         
@@ -294,6 +385,62 @@ class SDCardPanel(QWidget):
             print(f"Error getting RAW support info: {str(e)}")
             print("Make sure rawpy is installed: pip install rawpy")
         
+    def _toggle_photos(self):
+        """Toggle photos filter on/off."""
+        is_checked = not self.photos_button.isChecked()
+        self.photos_button.setChecked(is_checked)
+        
+        # Update toggle appearance
+        if is_checked:
+            self.photos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #0d6efd;
+                    border-radius: 8px;
+                    border: 1px solid #0d6efd;
+                }
+            """)
+            self.photos_handle.move(12, 1)
+        else:
+            self.photos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #444;
+                    border-radius: 8px;
+                    border: 1px solid #555;
+                }
+            """)
+            self.photos_handle.move(2, 1)
+        
+        # Trigger the filter changed handler
+        self._handle_filter_changed(self.photos_button)
+    
+    def _toggle_videos(self):
+        """Toggle videos filter on/off."""
+        is_checked = not self.videos_button.isChecked()
+        self.videos_button.setChecked(is_checked)
+        
+        # Update toggle appearance
+        if is_checked:
+            self.videos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #0d6efd;
+                    border-radius: 8px;
+                    border: 1px solid #0d6efd;
+                }
+            """)
+            self.videos_handle.move(12, 1)
+        else:
+            self.videos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #444;
+                    border-radius: 8px;
+                    border: 1px solid #555;
+                }
+            """)
+            self.videos_handle.move(2, 1)
+        
+        # Trigger the filter changed handler
+        self._handle_filter_changed(self.videos_button)
+
     def _handle_filter_changed(self, button: QPushButton) -> None:
         """Handle filter button click.
         
@@ -341,11 +488,11 @@ class SDCardPanel(QWidget):
             "Type": "type"
         }
         
-        # Get sort order from button
-        sort_order = "desc" if self.sort_order_button.text() == "↓" else "asc"
+        # Update current sort settings
+        self.current_sort_key = sort_map[sort_text]
         
         # Apply sorting
-        self.file_model.sort_files(sort_map[sort_text], sort_order)
+        self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
         
         # Update file list with current filters
         file_types = []
@@ -361,27 +508,19 @@ class SDCardPanel(QWidget):
         if not self.file_model:
             return
             
-        # Toggle button text
+        # Toggle button text and update current sort order
         is_ascending = self.sort_order_button.text() == "↑"
         if is_ascending:
             self.sort_order_button.setText("↓")
             self.sort_order_button.setToolTip("Sort descending")
-            sort_order = "desc"
+            self.current_sort_order = "desc"
         else:
             self.sort_order_button.setText("↑")
             self.sort_order_button.setToolTip("Sort ascending")
-            sort_order = "asc"
+            self.current_sort_order = "asc"
             
-        # Get current sort key from combo box
-        sort_map = {
-            "Name": "name",
-            "Size": "size",
-            "Type": "type"
-        }
-        sort_key = sort_map[self.sort_combo.currentText()]
-        
         # Apply sorting
-        self.file_model.sort_files(sort_key, sort_order)
+        self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
         
         # Update file list with current filters
         file_types = []
@@ -473,14 +612,69 @@ class SDCardPanel(QWidget):
         self.file_model = FileSystemModel(path)
         self.file_model.scan_directory()
         
-        # Get file count for debugging
-        file_count = len(self.file_model.get_files())
+        # Apply current sorting settings
+        self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
         
         # Update file list widget with model, defaulting to media files
         self.file_list.set_file_model(self.file_model, file_types=['image', 'video'])
         
+        # Update toggle states to reflect current button states
+        self._update_toggle_states()
+        
         # Update filter buttons
         self._update_filter_buttons()
+        
+        # Update sort UI to match current settings
+        sort_map_reverse = {
+            "name": "Name",
+            "size": "Size",
+            "type": "Type"
+        }
+        self.sort_combo.setCurrentText(sort_map_reverse[self.current_sort_key])
+        self.sort_order_button.setText("↓" if self.current_sort_order == "desc" else "↑")
+        self.sort_order_button.setToolTip(f"Sort {'descending' if self.current_sort_order == 'desc' else 'ascending'}")
+        
+    def _update_toggle_states(self):
+        """Update the toggle switch appearances based on current button states."""
+        # Update photos toggle
+        if self.photos_button.isChecked():
+            self.photos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #0d6efd;
+                    border-radius: 8px;
+                    border: 1px solid #0d6efd;
+                }
+            """)
+            self.photos_handle.move(12, 1)
+        else:
+            self.photos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #444;
+                    border-radius: 8px;
+                    border: 1px solid #555;
+                }
+            """)
+            self.photos_handle.move(2, 1)
+            
+        # Update videos toggle
+        if self.videos_button.isChecked():
+            self.videos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #0d6efd;
+                    border-radius: 8px;
+                    border: 1px solid #0d6efd;
+                }
+            """)
+            self.videos_handle.move(12, 1)
+        else:
+            self.videos_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #444;
+                    border-radius: 8px;
+                    border: 1px solid #555;
+                }
+            """)
+            self.videos_handle.move(2, 1)
         
     def _update_filter_buttons(self) -> None:
         """Update the filter buttons based on the current file model."""
