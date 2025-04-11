@@ -3,6 +3,7 @@ import sys
 import logging
 from typing import Optional
 from pathlib import Path
+import time
 
 from PyQt6.QtCore import QSize, Qt, QRect, QPoint
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QFont, QPen, QBrush, QImage, QPolygon
@@ -20,23 +21,30 @@ except ImportError:
     logger.warning("OpenCV not available. Install with: pip install opencv-python")
 
 def generate_video_thumbnail(file_path: str, size: QSize, frame_time: float = 1.0) -> Optional[QPixmap]:
-    """Generate a thumbnail from a video file.
+    """Generate a thumbnail for a video file.
     
     Args:
         file_path: Path to the video file
-        size: Desired thumbnail size (QSize)
-        frame_time: Time in seconds to extract the frame from (default: 1.0)
+        size: Desired thumbnail size
+        frame_time: Time in seconds to extract the frame from
         
     Returns:
-        QPixmap containing the thumbnail or None if generation failed
+        QPixmap containing the thumbnail or None if failed
     """
-    logger.debug(f"Generating video thumbnail for {file_path} at time {frame_time}s with size {size.width()}x{size.height()}")
-    
     if not OPENCV_AVAILABLE:
-        logger.warning("OpenCV not available, using fallback thumbnail")
+        logger.error("OpenCV is not available for video thumbnail generation.")
         return create_fallback_thumbnail(file_path, size)
     
     try:
+        start_time = time.time()  # Add start_time variable for logging
+        logger.debug(f"Generating video thumbnail for {file_path} at time {frame_time}s with size {size.width()}x{size.height()}")
+        
+        # Check memory cache first
+        cache_key = f"{file_path}_{size.width()}x{size.height()}_{frame_time}"
+        if hasattr(generate_video_thumbnail, "cache") and cache_key in generate_video_thumbnail.cache:
+            logger.debug(f"Memory cache hit for {file_path}")
+            return generate_video_thumbnail.cache[cache_key]
+        
         # Open the video file
         video = cv2.VideoCapture(file_path)
         
@@ -47,25 +55,21 @@ def generate_video_thumbnail(file_path: str, size: QSize, frame_time: float = 1.
         # Get video info
         fps = video.get(cv2.CAP_PROP_FPS)
         total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = total_frames / fps if fps > 0 else 0
         
         if fps <= 0 or total_frames <= 0:
             logger.error(f"Invalid video properties: fps={fps}, frames={total_frames}")
+            video.release()
             return create_fallback_thumbnail(file_path, size)
         
-        # Determine the frame to extract (convert time to frame number)
+        # Calculate frame number
         frame_number = int(frame_time * fps)
+        frame_number = min(max(0, frame_number), total_frames - 1)
         
-        # Make sure frame_number is within valid range
-        frame_number = max(0, min(frame_number, total_frames - 1))
-        
-        # Seek to the desired frame
+        # Set position to the desired frame
         video.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
         
         # Read the frame
         success, frame = video.read()
-        
-        # Release the video capture object
         video.release()
         
         if not success or frame is None:
@@ -75,28 +79,72 @@ def generate_video_thumbnail(file_path: str, size: QSize, frame_time: float = 1.
         # Convert BGR to RGB (OpenCV uses BGR format)
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
+        # Resize while maintaining aspect ratio
+        h, w, _ = rgb_frame.shape
+        
+        target_w, target_h = size.width(), size.height()
+        aspect_ratio = w / h
+        
+        if w > h:
+            # Landscape
+            new_w = target_w
+            new_h = int(new_w / aspect_ratio)
+            if new_h > target_h:
+                new_h = target_h
+                new_w = int(new_h * aspect_ratio)
+        else:
+            # Portrait
+            new_h = target_h
+            new_w = int(new_h * aspect_ratio)
+            if new_w > target_w:
+                new_w = target_w
+                new_h = int(new_w / aspect_ratio)
+        
+        # Resize frame
+        resized_frame = cv2.resize(rgb_frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        logger.debug(f"Resized frame from {w}x{h} to {new_w}x{new_h}")
+        
         # Create QImage from numpy array
-        height, width, channels = rgb_frame.shape
-        bytes_per_line = channels * width
-        image = QImage(rgb_frame.data, width, height, bytes_per_line, QImage.Format.Format_RGB888)
+        h, w, channels = resized_frame.shape
+        bytes_per_line = channels * w
+        q_img = QImage(resized_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         
-        # Convert to pixmap and scale to requested size
-        pixmap = QPixmap.fromImage(image)
-        scaled_pixmap = pixmap.scaled(
-            size, 
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
+        # Create QPixmap and center it on a transparent background of the target size
+        pixmap = QPixmap.fromImage(q_img)
         
-        # Add play button overlay
-        pixmap_with_play = add_play_button_overlay(scaled_pixmap)
+        # Create a target pixmap of the desired size
+        target_pixmap = QPixmap(target_w, target_h)
+        target_pixmap.fill(QColor(25, 25, 25))  # Dark background
+        
+        # Center the frame on the target pixmap
+        painter = QPainter(target_pixmap)
+        painter.drawPixmap((target_w - pixmap.width()) // 2, 
+                         (target_h - pixmap.height()) // 2, 
+                         pixmap)
+        painter.end()
+        
+        # Add filmstrip overlay
+        pixmap_with_overlay = add_filmstrip_overlay(target_pixmap)
         
         # Add duration indicator if available
-        if duration > 0:
-            pixmap_with_play = add_duration_indicator(pixmap_with_play, duration)
+        duration = get_video_duration(file_path)
+        if duration and duration > 0:
+            pixmap_with_overlay = add_duration_indicator(pixmap_with_overlay, duration)
         
-        logger.debug(f"Successfully generated thumbnail for {file_path}")
-        return pixmap_with_play
+        # Cache the result
+        if not hasattr(generate_video_thumbnail, "cache"):
+            generate_video_thumbnail.cache = {}
+        
+        generate_video_thumbnail.cache[cache_key] = pixmap_with_overlay
+        
+        # Keep cache size reasonable (max 50 items)
+        if len(generate_video_thumbnail.cache) > 50:
+            # Remove the oldest item
+            oldest_key = next(iter(generate_video_thumbnail.cache))
+            del generate_video_thumbnail.cache[oldest_key]
+        
+        logger.debug(f"Successfully generated thumbnail for {file_path} in {time.time() - start_time:.3f}s")
+        return pixmap_with_overlay
         
     except Exception as e:
         logger.error(f"Error generating video thumbnail: {str(e)}")
@@ -180,24 +228,62 @@ def create_fallback_thumbnail(file_path: str, size: QSize) -> QPixmap:
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     
     # Background with rounded corners
+    width, height = size.width(), size.height()
     painter.setPen(QPen(QColor(40, 40, 40)))
     painter.setBrush(QBrush(QColor(40, 40, 40)))
-    painter.drawRoundedRect(0, 0, size.width(), size.height(), 8, 8)
+    painter.drawRoundedRect(0, 0, width, height, 8, 8)
     
-    # Add a play triangle overlay
-    width, height = size.width(), size.height()
-    play_triangle = QPolygon([
-        QPoint(width // 2 - 25, height // 2 - 25),
-        QPoint(width // 2 + 25, height // 2),
-        QPoint(width // 2 - 25, height // 2 + 25)
-    ])
-    painter.setBrush(QColor(231, 76, 60, 180))
+    # Calculate filmstrip properties
+    strip_width = max(width // 12, 6)  # Width of the filmstrip, at least 6px
+    hole_height = height // 8  # Height of each sprocket hole
+    hole_spacing = height // 6  # Space between holes
+    hole_width = int(strip_width * 0.6)  # Width of each hole, ensure it's an integer
+    
+    # Draw left filmstrip
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawPolygon(play_triangle)
+    painter.setBrush(QBrush(QColor(0, 0, 0, 255)))  # Full opacity (was 180)
+    painter.drawRect(0, 0, strip_width, height)
     
-    # Add video text
+    # Draw right filmstrip
+    painter.drawRect(width - strip_width, 0, strip_width, height)
+    
+    # Draw sprocket holes
+    painter.setBrush(QBrush(QColor(60, 60, 60, 255)))  # Full opacity (was 220)
+    
+    # Calculate number of holes based on spacing
+    hole_count = height // (hole_height + hole_spacing)
+    if hole_count < 3:
+        hole_count = 3  # Ensure at least 3 holes
+    
+    # Calculate vertical offset to center the holes
+    total_holes_height = hole_count * hole_height + (hole_count - 1) * hole_spacing
+    y_offset = (height - total_holes_height) // 2
+    
+    # Draw holes on left side
+    for i in range(hole_count):
+        y_pos = y_offset + i * (hole_height + hole_spacing)
+        hole_x = (strip_width - hole_width) // 2
+        painter.drawRoundedRect(
+            int(hole_x), int(y_pos), 
+            hole_width, hole_height, 
+            2, 2
+        )
+    
+    # Draw holes on right side
+    for i in range(hole_count):
+        y_pos = y_offset + i * (hole_height + hole_spacing)
+        hole_x = width - strip_width + (strip_width - hole_width) // 2
+        painter.drawRoundedRect(
+            int(hole_x), int(y_pos), 
+            hole_width, hole_height, 
+            2, 2
+        )
+    
+    # Add "VIDEO" text in the center
     painter.setPen(QColor(255, 255, 255))
-    painter.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+    font = QFont("Arial", height // 8)
+    font.setBold(True)
+    painter.setFont(font)
     painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "VIDEO")
     
     # Add file extension at the bottom
@@ -251,4 +337,63 @@ def get_video_duration(file_path: str) -> Optional[float]:
         return duration
     except Exception as e:
         logger.error(f"Error getting video duration: {str(e)}")
-        return None 
+        return None
+
+def add_filmstrip_overlay(pixmap: QPixmap) -> QPixmap:
+    """Add filmstrip borders to the left and right sides of the thumbnail."""
+    # Create a copy of the pixmap to draw on
+    result = QPixmap(pixmap)
+    
+    painter = QPainter(result)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    
+    width, height = pixmap.width(), pixmap.height()
+    
+    # Calculate filmstrip properties
+    strip_width = max(width // 12, 6)  # Width of the filmstrip, at least 6px
+    hole_height = height // 8  # Height of each sprocket hole
+    hole_spacing = height // 6  # Space between holes
+    hole_width = int(strip_width * 0.6)  # Width of each hole, ensure it's an integer
+    
+    # Draw left filmstrip
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(QColor(0, 0, 0, 255)))
+    painter.drawRect(0, 0, strip_width, height)
+    
+    # Draw right filmstrip
+    painter.drawRect(width - strip_width, 0, strip_width, height)
+    
+    # Draw sprocket holes (left side)
+    painter.setBrush(QBrush(QColor(40, 40, 40, 255)))
+    
+    # Calculate number of holes based on spacing
+    hole_count = height // (hole_height + hole_spacing)
+    if hole_count < 3:
+        hole_count = 3  # Ensure at least 3 holes
+    
+    # Calculate vertical offset to center the holes
+    total_holes_height = hole_count * hole_height + (hole_count - 1) * hole_spacing
+    y_offset = (height - total_holes_height) // 2
+    
+    # Draw holes on left side
+    for i in range(hole_count):
+        y_pos = y_offset + i * (hole_height + hole_spacing)
+        hole_x = (strip_width - hole_width) // 2
+        painter.drawRoundedRect(
+            int(hole_x), int(y_pos), 
+            hole_width, hole_height, 
+            2, 2
+        )
+    
+    # Draw holes on right side
+    for i in range(hole_count):
+        y_pos = y_offset + i * (hole_height + hole_spacing)
+        hole_x = width - strip_width + (strip_width - hole_width) // 2
+        painter.drawRoundedRect(
+            int(hole_x), int(y_pos), 
+            hole_width, hole_height, 
+            2, 2
+        )
+    
+    painter.end()
+    return result 

@@ -1,46 +1,99 @@
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QHBoxLayout, QSizePolicy, QStyle, QAbstractItemView, QFrame, QToolTip, QApplication
-)
-from PyQt6.QtCore import (
-    Qt, pyqtSignal, QSize, QPoint, QByteArray, QFileInfo, QDateTime,
-    QThread, QRunnable, QThreadPool, QObject, pyqtSlot, QEvent, QTimer, QRect
-)
-from PyQt6.QtGui import QIcon, QFont, QPixmap, QColor, QPainter, QPolygon, QLinearGradient, QImage, QPen, QBrush
-from typing import Dict, Optional, List, Callable, Set
+"""
+File List Widget for SD Card Manager.
+
+Handles displaying files from SD cards in different view modes (list, icons, thumbnails)
+with asynchronous thumbnail generation for images, videos, and other file types.
+
+Video thumbnail optimizations:
+- Uses OpenCV for frame extraction via the video_thumbnail module
+- Supports optimized methods through video_thumbnail_optimized, which offers several
+  optimization techniques:
+  - fast_first_frame: Extracts only the first frame (fastest method)
+  - fast_frame_grab: Efficiently extracts a specific frame number (good quality/speed balance)
+  - direct_seek: Direct timestamp seeking without decoding intervening frames
+  - keyframe_only: Extract nearest keyframe for faster processing
+  - stream_optimized: Uses optimized video stream parameters
+  - skip_frames: Skips frames for faster seeking
+  - hardware_accel: Attempts to use hardware acceleration
+- Configuration options are available in VIDEO_THUMBNAIL_CONFIG
+
+For benchmarking video thumbnail performance, use:
+  test_video_thumbnail(path_to_video_file)
+"""
+
 import os
-import hashlib
-import json
-import shutil
-from datetime import datetime
-import logging
 import time
+import json
+import logging
+import shutil
+import subprocess
+import math
+import hashlib
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple, Any, Set, Callable
 from queue import Queue, Empty
 from threading import Thread
+import sys
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger('FileList')
+logger = logging.getLogger("FileList")
 
-# Import the video thumbnail module
+from PyQt6.QtCore import (
+    Qt, QSize, QTimer, QRect, QPoint, QEvent, QThread, QThreadPool, 
+    QRunnable, QObject, pyqtSignal, pyqtSlot, QMutex, QRunnable, QCoreApplication
+)
+from PyQt6.QtGui import (
+    QPixmap, QImage, QPainter, QColor, QIcon, QPen, QBrush, QFont, QAction, 
+    QKeySequence, QDrag, QCursor, QShortcut, QPainterPath, QStandardItem,
+    QStandardItemModel, QPainter, QPolygon, QLinearGradient
+)
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
+    QListWidget, QListView, QListWidgetItem, QMenu, QFrame, QDialog,
+    QMessageBox, QAbstractItemView, QFileDialog, QSizePolicy, QToolButton,
+    QToolTip, QScrollArea, QGridLayout, QSplitter, QProgressBar, QCheckBox,
+    QComboBox, QInputDialog, QLineEdit, QStyle
+)
+
+# Initialize video thumbnail availability flags
+VIDEO_THUMBNAIL_AVAILABLE = False
+OPTIMIZED_THUMBNAIL_AVAILABLE = False
+
+# Video thumbnail configuration
+VIDEO_THUMBNAIL_CONFIG = {
+    "use_optimized": True,        # Whether to use the optimized version when available
+    "preferred_method": "fast_frame_grab",  # Use fast_frame_grab as it provides better content than fast_first_frame
+    "frame_number": 5,            # Frame number for thumbnail generation (changed from 50)
+    "frame_time": 2.0,            # Time in seconds for standard method (only used as fallback)
+    "fallback_to_standard": True  # Fallback to standard method if optimized fails
+}
+
+# Import video thumbnail module if available
 try:
-    import logging
     from utils import video_thumbnail
-    VIDEO_THUMBNAIL_AVAILABLE = True
-    logging.getLogger('FileList').info("Video thumbnail module loaded successfully")
     
-    # Verify OpenCV is available through the module
-    if not video_thumbnail.OPENCV_AVAILABLE:
-        logging.getLogger('FileList').warning("OpenCV is not available in video_thumbnail module")
-        VIDEO_THUMBNAIL_AVAILABLE = False
+    # Check if OpenCV is available
+    if not hasattr(video_thumbnail, 'OPENCV_AVAILABLE') or not video_thumbnail.OPENCV_AVAILABLE:
+        logger.warning("OpenCV is not available in video_thumbnail module")
     else:
-        logging.getLogger('FileList').info("OpenCV is available through video_thumbnail module")
+        logger.info("OpenCV is available through video_thumbnail module")
+        VIDEO_THUMBNAIL_AVAILABLE = True
+        
+        # Try to import the optimized version
+        try:
+            from utils import video_thumbnail_optimized
+            OPTIMIZED_THUMBNAIL_AVAILABLE = True
+            logger.info("Optimized video thumbnail module is available")
+        except ImportError as e:
+            logger.warning(f"Optimized video thumbnail module not available: {e}")
+    
 except ImportError as e:
-    VIDEO_THUMBNAIL_AVAILABLE = False
-    logging.getLogger('FileList').warning(f"Failed to import video_thumbnail module: {e}")
+    logger.warning(f"Failed to import video_thumbnail module: {e}")
+except Exception as e:
+    logger.error(f"Unexpected error importing video_thumbnail: {e}", exc_info=True)
 
-# Add this at the top to handle the case when rawpy is not installed
+# Import other modules
 try:
     import rawpy
     import io
@@ -69,13 +122,26 @@ class ThumbnailCache:
     """Cache for file thumbnails to avoid regenerating them"""
     
     def __init__(self):
-        """Initialize the thumbnail cache"""
-        self.cache: Dict[str, QPixmap] = {}
-        self.loading: Set[str] = set()
-        self.callbacks: Dict[str, List[Callable[[str, QPixmap], None]]] = {}
+        """Initialize the cache"""
+        # Cache of pixmaps
+        self.cache = {}
+        # Set of keys currently being loaded
+        self.loading = set()
+        # Map of key -> callbacks
+        self.callbacks = {}
+        # Queue for worker thread
         self.queue = Queue()
-        self.worker_thread = Thread(target=self._worker, daemon=True)
-        self.worker_thread.start()
+        # Use multiple worker threads for better performance
+        self.worker_threads = []
+        
+        # The number of worker threads to use (more threads = faster processing but higher CPU load)
+        num_workers = 2
+        
+        # Start the worker threads
+        for _ in range(num_workers):
+            thread = Thread(target=self._worker, daemon=True)
+            thread.start()
+            self.worker_threads.append(thread)
 
     def get(self, file_path: str, size: QSize = QSize(64, 64)) -> Optional[QPixmap]:
         """Get a thumbnail from the cache or generate it"""
@@ -113,34 +179,66 @@ class ThumbnailCache:
         """Worker thread to generate thumbnails in the background"""
         while True:
             try:
-                file_path, size, key = self.queue.get()
-                try:
-                    if not os.path.exists(file_path):
-                        logging.warning(f"File does not exist: {file_path}")
-                        self.loading.discard(key)
-                        continue
-                        
-                    file_type = self._get_file_type(file_path)
-                    pixmap = self._generate_thumbnail(file_path, size, file_type)
+                # Process up to 5 files at once from the queue to improve batch efficiency
+                files_to_process = []
+                for _ in range(5):  # Process up to 5 items in one batch
+                    try:
+                        # Get with a short timeout to avoid blocking indefinitely
+                        file_path, size, key = self.queue.get(timeout=0.1)
+                        files_to_process.append((file_path, size, key))
+                    except Empty:
+                        break
+                
+                if not files_to_process:
+                    # If no files to process, sleep briefly
+                    time.sleep(0.2)
+                    continue
                     
-                    if pixmap:
-                        self.cache[key] = pixmap
+                # Process the batch of files
+                for file_path, size, key in files_to_process:
+                    try:
+                        # Skip if file doesn't exist
+                        if not os.path.exists(file_path):
+                            logging.warning(f"File does not exist: {file_path}")
+                            self.loading.discard(key)
+                            continue
                         
-                        # Call all callbacks
-                        if key in self.callbacks:
-                            for callback in self.callbacks[key]:
-                                try:
-                                    callback(file_path, pixmap)
-                                except Exception as e:
-                                    logging.error(f"Error in thumbnail callback: {e}")
-                            del self.callbacks[key]
+                        # Check if already in cache (another worker might have processed it)
+                        if key in self.cache:
+                            if key in self.callbacks:
+                                for callback in self.callbacks[key]:
+                                    try:
+                                        callback(file_path, self.cache[key])
+                                    except Exception as e:
+                                        logging.error(f"Error in thumbnail callback: {e}")
+                                del self.callbacks[key]
+                            self.loading.discard(key)
+                            continue
+                        
+                        file_type = self._get_file_type(file_path)
+                        
+                        # Prioritize video files for more efficient processing
+                        if file_type == 'video':
+                            logging.info(f"Generating thumbnail for video file: {file_path}")
+                        
+                        pixmap = self._generate_thumbnail(file_path, size, file_type)
+                        
+                        if pixmap:
+                            self.cache[key] = pixmap
                             
-                    self.loading.discard(key)
-                except Exception as e:
-                    logging.error(f"Error generating thumbnail: {e}")
-                    self.loading.discard(key)
-            except Empty:
-                time.sleep(0.1)
+                            # Call all callbacks
+                            if key in self.callbacks:
+                                for callback in self.callbacks[key]:
+                                    try:
+                                        callback(file_path, pixmap)
+                                    except Exception as e:
+                                        logging.error(f"Error in thumbnail callback: {e}")
+                                del self.callbacks[key]
+                                
+                        self.loading.discard(key)
+                    except Exception as e:
+                        logging.error(f"Error generating thumbnail for {file_path}: {e}")
+                        self.loading.discard(key)
             except Exception as e:
                 logging.error(f"Error in thumbnail worker: {e}")
 
@@ -246,14 +344,49 @@ class ThumbnailCache:
 
     def _generate_video_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
         """Generate a thumbnail for a video file"""
-        # Use the video_thumbnail module if available
+        # Use the optimized module if available (fast_frame_grab method for best quality/speed balance)
         if VIDEO_THUMBNAIL_AVAILABLE:
             logging.info(f"Attempting to generate video thumbnail for {file_path}")
             try:
+                # First try the optimized module if available and configured
+                if OPTIMIZED_THUMBNAIL_AVAILABLE and VIDEO_THUMBNAIL_CONFIG["use_optimized"]:
+                    try:
+                        method = VIDEO_THUMBNAIL_CONFIG["preferred_method"]
+                        frame_number = VIDEO_THUMBNAIL_CONFIG["frame_number"]
+                        logging.info(f"Using optimized thumbnail generator with {method} method (frame {frame_number})")
+                        
+                        # Different parameters based on method
+                        kwargs = {}
+                        if method == "fast_frame_grab":
+                            kwargs["frame_number"] = frame_number
+                        elif method not in ["fast_first_frame", "standard"]:
+                            # For other methods, use frame number converted to time
+                            # This is an approximation assuming 30fps
+                            kwargs["frame_time"] = frame_number / 30.0
+                        
+                        pixmap, _ = video_thumbnail_optimized.generate_optimized_thumbnail(
+                            file_path,
+                            size,
+                            method=method,
+                            **kwargs
+                        )
+                        if pixmap and not pixmap.isNull():
+                            logging.info(f"Successfully generated optimized video thumbnail for {file_path}")
+                            return pixmap
+                    except Exception as e:
+                        logging.warning(f"Optimized thumbnail generation failed: {e}")
+                        if not VIDEO_THUMBNAIL_CONFIG["fallback_to_standard"]:
+                            raise
+                        logging.warning("Falling back to standard method")
+                
+                # Fall back to standard method if optimized fails or is not available/configured
+                logging.info(f"Using standard video thumbnail method with frame {VIDEO_THUMBNAIL_CONFIG['frame_number']}")
+                # Standard method uses time, so convert frame number to time (assuming 30fps)
+                approx_time = VIDEO_THUMBNAIL_CONFIG["frame_number"] / 30.0
                 video_pixmap = video_thumbnail.generate_video_thumbnail(
                     file_path, 
                     size, 
-                    frame_time=1.0  # Extract frame from 1st second
+                    frame_time=approx_time  # Convert frame number to approximate time
                 )
                 if video_pixmap and not video_pixmap.isNull():
                     logging.info(f"Successfully generated video thumbnail for {file_path}")
@@ -439,13 +572,50 @@ class ThumbnailWorker(QRunnable):
                 # First check if the module is available
                 if VIDEO_THUMBNAIL_AVAILABLE:
                     try:
-                        # Use the video_thumbnail module to generate thumbnail
+                        # Use the optimized module if available and configured
                         thumbnail_size = QSize(self.thumb_width, self.thumb_height)
                         logger.info(f"ThumbnailWorker: Generating video thumbnail for {self.file_path}")
+                        
+                        if OPTIMIZED_THUMBNAIL_AVAILABLE and VIDEO_THUMBNAIL_CONFIG["use_optimized"]:
+                            try:
+                                logger.info(f"ThumbnailWorker: Using optimized thumbnail generator")
+                                
+                                method = VIDEO_THUMBNAIL_CONFIG["preferred_method"]
+                                frame_number = VIDEO_THUMBNAIL_CONFIG["frame_number"]
+                                
+                                # Different parameters based on method
+                                kwargs = {}
+                                if method == "fast_frame_grab":
+                                    kwargs["frame_number"] = frame_number
+                                elif method not in ["fast_first_frame", "standard"]:
+                                    # For other methods, use frame number converted to time
+                                    # This is an approximation assuming 30fps
+                                    kwargs["frame_time"] = frame_number / 30.0
+                                
+                                # Use the already imported module from the top-level import
+                                video_pixmap, _ = video_thumbnail_optimized.generate_optimized_thumbnail(
+                                    self.file_path,
+                                    thumbnail_size,
+                                    method=method,
+                                    **kwargs
+                                )
+                                if video_pixmap and not video_pixmap.isNull():
+                                    logger.info(f"ThumbnailWorker: Successfully generated optimized video thumbnail")
+                                    return video_pixmap
+                            except Exception as e:
+                                logger.warning(f"ThumbnailWorker: Optimized method failed: {e}")
+                                if not VIDEO_THUMBNAIL_CONFIG["fallback_to_standard"]:
+                                    raise
+                                logger.warning("ThumbnailWorker: Falling back to standard method")
+                        
+                        # Fall back to standard method
+                        logger.info(f"ThumbnailWorker: Using standard video thumbnail method with frame {VIDEO_THUMBNAIL_CONFIG['frame_number']}")
+                        # Standard method uses time, so convert frame number to time (assuming 30fps)
+                        approx_time = VIDEO_THUMBNAIL_CONFIG["frame_number"] / 30.0
                         video_pixmap = video_thumbnail.generate_video_thumbnail(
                             self.file_path, 
                             thumbnail_size, 
-                            frame_time=1.0  # Extract frame from 1st second
+                            frame_time=approx_time  # Convert frame number to approximate time
                         )
                         if video_pixmap and not video_pixmap.isNull():
                             logger.info(f"ThumbnailWorker: Successfully generated video thumbnail for {self.file_path}")
@@ -938,39 +1108,39 @@ class FileIconItem(QWidget):
         self.icon_label.setPixmap(pixmap)
     
     def _request_thumbnail(self):
-        """Request thumbnail asynchronously."""
+        """Request thumbnail generation for the file."""
+        # Avoid duplicate thumbnail requests
+        if hasattr(self, '_thumbnail_requested') and self._thumbnail_requested:
+            return
+        
+        self._thumbnail_requested = True
+        
+        # First check cache
+        cache_key = self._get_cache_key(self.file_info['path'])
+        pixmap = THUMBNAIL_MANAGER.get(self.file_info['path'], QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT))
+        
+        if pixmap and not pixmap.isNull():
+            # Cache hit - use it directly
+            self.icon_label.setPixmap(pixmap)
+            self.thumbnail_loaded = True
+            return
+        
+        # For video files, add loading indicator right away
+        if self.file_info['type'] == 'video':
+            self._show_loading_indicator()
+        
+        # Request asynchronous thumbnail generation
         def update_thumbnail(key, pixmap):
-            """Callback when thumbnail is ready."""
-            if not pixmap.isNull() and not self.thumbnail_loaded:
+            if pixmap and not pixmap.isNull():
                 self.icon_label.setPixmap(pixmap)
                 self.thumbnail_loaded = True
-                
-                # Log success for video files
-                file_type = self.file_info['type']
-                if file_type == 'video':
-                    logging.info(f"Successfully set video thumbnail for {self.file_info['path']}")
-                
-        # Request thumbnail asynchronously with higher priority for videos
-        file_type = self.file_info['type']
-        if file_type == 'video':
-            logging.info(f"Requesting video thumbnail for {self.file_info['path']}")
-            
-        # Set a timeout for thumbnail generation
-        from PyQt6.QtCore import QTimer
         
-        # Create a timer that will show a loading indicator if thumbnail takes too long
-        timer = QTimer(self)
-        timer.setSingleShot(True)
-        timer.timeout.connect(lambda: self._show_loading_indicator() if not self.thumbnail_loaded else None)
-        timer.start(1000)  # 1 second timeout
-                
-        # Request the thumbnail
         THUMBNAIL_MANAGER.get_async(
-            self.file_info['path'],
+            self.file_info['path'], 
             QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT),
             update_thumbnail
         )
-        
+    
     def _show_loading_indicator(self):
         """Show a loading indicator if thumbnail is taking time to load."""
         if self.thumbnail_loaded:
@@ -990,30 +1160,42 @@ class FileIconItem(QWidget):
             painter.end()
             self.icon_label.setPixmap(pixmap)
             
-            # Set a timer to retry in 2 seconds if still not loaded
+            # Set a timer to retry in 4 seconds if still not loaded (increased from 2 seconds)
             from PyQt6.QtCore import QTimer
-            QTimer.singleShot(2000, self._handle_thumbnail_timeout)
+            QTimer.singleShot(4000, self._handle_thumbnail_timeout)
             
     def _handle_thumbnail_timeout(self):
         """Handle case when thumbnail takes too long to generate."""
+        # Don't do anything if thumbnail is already loaded
         if self.thumbnail_loaded:
             return
-            
+        
         # Only for video files
         if self.file_info['type'] != 'video':
             return
-            
+    
+        # Check if there's a thumbnail in the cache before trying direct generation
+        cache_key = self._get_cache_key(self.file_info['path'])
+        existing_thumbnail = THUMBNAIL_MANAGER.get(self.file_info['path'], QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT))
+    
+        # If thumbnail exists in cache now, use it
+        if existing_thumbnail and not existing_thumbnail.isNull():
+            self.icon_label.setPixmap(existing_thumbnail)
+            self.thumbnail_loaded = True
+            logging.info(f"Found cached thumbnail for {self.file_info['path']} after timeout")
+            return
+    
         logging.warning(f"Thumbnail generation timeout for video: {self.file_info['path']}")
-        
+    
         # Try using test_video_thumbnail to directly generate
         try:
             from PyQt6.QtCore import QTimer
             logging.info("Attempting direct thumbnail generation after timeout")
-            # Schedule a direct thumbnail test
-            QTimer.singleShot(100, lambda: self._try_direct_thumbnail())
+            # Schedule a direct thumbnail test - with a bit more delay to allow async to complete if it's almost done
+            QTimer.singleShot(200, lambda: self._try_direct_thumbnail())
         except Exception as e:
             logging.error(f"Error setting up direct thumbnail generation: {e}")
-            
+    
     def _try_direct_thumbnail(self):
         """Try to directly generate a video thumbnail using the test function."""
         if self.thumbnail_loaded:
@@ -1025,12 +1207,27 @@ class FileIconItem(QWidget):
             logging.info(f"Direct thumbnail generation for {self.file_info['path']}")
             thumbnail_size = QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT)
             
+            # Use the frame number from configuration
+            frame_number = VIDEO_THUMBNAIL_CONFIG["frame_number"]
+            # Convert frame number to approximate time (assuming 30fps)
+            approx_time = frame_number / 30.0
+            
+            # Check if already loaded before we start the expensive operation
+            if self.thumbnail_loaded:
+                logging.info(f"Thumbnail already loaded for {self.file_info['path']}, skipping direct generation")
+                return
+                
             pixmap = video_thumbnail.generate_video_thumbnail(
                 self.file_info['path'],
                 thumbnail_size,
-                frame_time=1.0
+                frame_time=approx_time  # Use the same frame as the optimized method
             )
             
+            # Check again if it's already loaded (async worker might have completed)
+            if self.thumbnail_loaded:
+                logging.info(f"Thumbnail already loaded for {self.file_info['path']} while direct generation was running")
+                return
+                
             if pixmap and not pixmap.isNull():
                 self.icon_label.setPixmap(pixmap)
                 self.thumbnail_loaded = True
@@ -2015,19 +2212,103 @@ def test_video_thumbnail(file_path):
             logger.error("OpenCV is not available")
             return False
             
-        logger.info(f"Generating thumbnail for {file_path}")
+        logger.info(f"Testing video thumbnail generation for {file_path}")
+        logger.info(f"Current configuration: {VIDEO_THUMBNAIL_CONFIG}")
+        
+        # Test standard method
+        frame_number = VIDEO_THUMBNAIL_CONFIG["frame_number"]
+        # Convert frame number to approximate time (assuming 30fps)
+        approx_time = frame_number / 30.0
+        
+        logger.info(f"Testing standard method with frame {frame_number} (approx time: {approx_time:.2f}s)")
+        start_time = time.time()
         pixmap = video_thumbnail.generate_video_thumbnail(
             file_path,
             QSize(200, 150),
-            frame_time=1.0
+            frame_time=approx_time  # Convert frame number to approximate time
         )
+        standard_time = time.time() - start_time
+        standard_success = pixmap and not pixmap.isNull()
         
-        if pixmap and not pixmap.isNull():
-            logger.info("Successfully generated thumbnail")
-            return True
-        else:
-            logger.error("Failed to generate thumbnail (null pixmap)")
-            return False
+        logger.info(f"Standard method completed in {standard_time:.4f}s - Success: {standard_success}")
+        
+        # Test optimized methods if available
+        optimized_methods = {}
+        try:
+            from utils import video_thumbnail_optimized
+            logger.info(f"Testing optimized methods with frame {frame_number}")
+            
+            # Test each available method
+            for method in video_thumbnail_optimized.OPTIMIZATION_METHODS:
+                start_time = time.time()
+                
+                # Set appropriate parameters based on method
+                kwargs = {}
+                if method == "fast_frame_grab":
+                    kwargs["frame_number"] = frame_number
+                elif method not in ["fast_first_frame", "standard"]:
+                    # For other methods, convert frame number to time
+                    kwargs["frame_time"] = approx_time
+                
+                try:
+                    pixmap, _ = video_thumbnail_optimized.generate_optimized_thumbnail(
+                        file_path,
+                        QSize(200, 150),
+                        method=method,
+                        **kwargs
+                    )
+                    
+                    method_time = time.time() - start_time
+                    method_success = pixmap and not pixmap.isNull()
+                    
+                    # Store results
+                    optimized_methods[method] = {
+                        "time": method_time,
+                        "success": method_success,
+                        "speedup": standard_time / method_time if method_time > 0 else 0
+                    }
+                    
+                    logger.info(f"{method} method: {method_time:.4f}s, Success: {method_success}, " 
+                               f"Speedup: {standard_time / method_time:.2f}x")
+                except Exception as e:
+                    logger.error(f"Error testing {method} method: {e}")
+                    optimized_methods[method] = {
+                        "time": 0,
+                        "success": False,
+                        "error": str(e)
+                    }
+            
+            # Find the fastest successful method
+            successful_methods = {m: data for m, data in optimized_methods.items() 
+                                if data.get("success", False)}
+            
+            if successful_methods:
+                fastest_method = min(successful_methods.items(), 
+                                   key=lambda x: x[1]["time"])
+                
+                best_quality_method = "fast_frame_grab" if "fast_frame_grab" in successful_methods else fastest_method[0]
+                
+                logger.info(f"RECOMMENDATION:")
+                logger.info(f"  Fastest method: {fastest_method[0]} ({fastest_method[1]['time']:.4f}s)")
+                logger.info(f"  Best quality/speed: {best_quality_method}")
+                logger.info(f"  Current setting: {VIDEO_THUMBNAIL_CONFIG['preferred_method']}")
+                
+                # Suggest updating configuration if significantly faster option available
+                current_method = VIDEO_THUMBNAIL_CONFIG["preferred_method"]
+                if current_method in successful_methods:
+                    current_time = successful_methods[current_method]["time"]
+                    fastest_time = fastest_method[1]["time"]
+                    
+                    if current_time > fastest_time * 1.5:  # If current is 50% slower than fastest
+                        logger.info(f"SUGGESTION: Consider changing preferred_method to {fastest_method[0]} "
+                                  f"for {current_time/fastest_time:.1f}x speed improvement")
+            
+        except ImportError:
+            logger.warning("Optimized thumbnail module not available")
+        except Exception as e:
+            logger.error(f"Error testing optimized methods: {e}")
+        
+        return standard_success
     except Exception as e:
         logger.exception(f"Error testing video thumbnail: {e}")
         return False
