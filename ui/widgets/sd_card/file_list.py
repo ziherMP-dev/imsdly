@@ -23,16 +23,22 @@ logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('FileList')
 
-# Global thumbnail cache (memory)
-THUMBNAIL_CACHE = {}
-
-# Disk-based cache settings
-CACHE_DIR = os.path.join(os.path.expanduser('~'), '.imsdly', 'thumbnail_cache')
-MAX_CACHE_SIZE_MB = 500  # Maximum cache size in MB
-CACHE_INDEX_FILE = os.path.join(CACHE_DIR, 'cache_index.json')
-
-# Create cache directory if it doesn't exist
-os.makedirs(CACHE_DIR, exist_ok=True)
+# Import the video thumbnail module
+try:
+    import logging
+    from utils import video_thumbnail
+    VIDEO_THUMBNAIL_AVAILABLE = True
+    logging.getLogger('FileList').info("Video thumbnail module loaded successfully")
+    
+    # Verify OpenCV is available through the module
+    if not video_thumbnail.OPENCV_AVAILABLE:
+        logging.getLogger('FileList').warning("OpenCV is not available in video_thumbnail module")
+        VIDEO_THUMBNAIL_AVAILABLE = False
+    else:
+        logging.getLogger('FileList').info("OpenCV is available through video_thumbnail module")
+except ImportError as e:
+    VIDEO_THUMBNAIL_AVAILABLE = False
+    logging.getLogger('FileList').warning(f"Failed to import video_thumbnail module: {e}")
 
 # Add this at the top to handle the case when rawpy is not installed
 try:
@@ -46,6 +52,17 @@ except ImportError:
     logger.warning("RawPy not found. RAW thumbnails will not be available.")
     logger.info("Install with: pip install rawpy")
     RAWPY_AVAILABLE = False
+
+# Global thumbnail cache (memory)
+THUMBNAIL_CACHE = {}
+
+# Disk-based cache settings
+CACHE_DIR = os.path.join(os.path.expanduser('~'), '.imsdly', 'thumbnail_cache')
+MAX_CACHE_SIZE_MB = 500  # Maximum cache size in MB
+CACHE_INDEX_FILE = os.path.join(CACHE_DIR, 'cache_index.json')
+
+# Create cache directory if it doesn't exist
+os.makedirs(CACHE_DIR, exist_ok=True)
 
 # Define a thumbnail cache to avoid regenerating thumbnails
 class ThumbnailCache:
@@ -229,8 +246,27 @@ class ThumbnailCache:
 
     def _generate_video_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
         """Generate a thumbnail for a video file"""
-        # For now, just return a generic video icon
-        # In the future, could integrate with a library like opencv to extract a frame
+        # Use the video_thumbnail module if available
+        if VIDEO_THUMBNAIL_AVAILABLE:
+            logging.info(f"Attempting to generate video thumbnail for {file_path}")
+            try:
+                video_pixmap = video_thumbnail.generate_video_thumbnail(
+                    file_path, 
+                    size, 
+                    frame_time=1.0  # Extract frame from 1st second
+                )
+                if video_pixmap and not video_pixmap.isNull():
+                    logging.info(f"Successfully generated video thumbnail for {file_path}")
+                    return video_pixmap
+                else:
+                    logging.warning(f"video_thumbnail.generate_video_thumbnail returned null/empty pixmap for {file_path}")
+            except Exception as e:
+                logging.error(f"Error using video_thumbnail module: {e}", exc_info=True)
+        else:
+            logging.warning("VIDEO_THUMBNAIL_AVAILABLE is False, using fallback")
+                
+        # Fall back to generic thumbnail if module not available or fails
+        logging.info(f"Using fallback thumbnail for {file_path}")
         return self._generate_generic_thumbnail(file_path, size, is_video=True)
 
     def _generate_document_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
@@ -398,10 +434,31 @@ class ThumbnailWorker(QRunnable):
                 if not pixmap.isNull():
                     return self._scale_and_center_pixmap(pixmap)
             
-            # Video thumbnails
+            # Video thumbnails - use the video_thumbnail module
             if file_type == 'video':
-                # For now, create a generic video thumbnail
-                # Could be enhanced to extract actual video frames
+                # First check if the module is available
+                if VIDEO_THUMBNAIL_AVAILABLE:
+                    try:
+                        # Use the video_thumbnail module to generate thumbnail
+                        thumbnail_size = QSize(self.thumb_width, self.thumb_height)
+                        logger.info(f"ThumbnailWorker: Generating video thumbnail for {self.file_path}")
+                        video_pixmap = video_thumbnail.generate_video_thumbnail(
+                            self.file_path, 
+                            thumbnail_size, 
+                            frame_time=1.0  # Extract frame from 1st second
+                        )
+                        if video_pixmap and not video_pixmap.isNull():
+                            logger.info(f"ThumbnailWorker: Successfully generated video thumbnail for {self.file_path}")
+                            return video_pixmap
+                        else:
+                            logger.warning(f"ThumbnailWorker: Video thumbnail generation returned null/empty pixmap for {self.file_path}")
+                    except Exception as e:
+                        logger.error(f"ThumbnailWorker: Error using video_thumbnail module: {str(e)}", exc_info=True)
+                else:
+                    logger.warning("ThumbnailWorker: VIDEO_THUMBNAIL_AVAILABLE is False, using fallback")
+                    
+                # If video_thumbnail module failed or not available, use fallback
+                logger.info(f"ThumbnailWorker: Using fallback thumbnail for {self.file_path}")
                 return self._create_video_thumbnail()
             
             # Generic file thumbnail
@@ -888,12 +945,102 @@ class FileIconItem(QWidget):
                 self.icon_label.setPixmap(pixmap)
                 self.thumbnail_loaded = True
                 
-        # Request thumbnail asynchronously
+                # Log success for video files
+                file_type = self.file_info['type']
+                if file_type == 'video':
+                    logging.info(f"Successfully set video thumbnail for {self.file_info['path']}")
+                
+        # Request thumbnail asynchronously with higher priority for videos
+        file_type = self.file_info['type']
+        if file_type == 'video':
+            logging.info(f"Requesting video thumbnail for {self.file_info['path']}")
+            
+        # Set a timeout for thumbnail generation
+        from PyQt6.QtCore import QTimer
+        
+        # Create a timer that will show a loading indicator if thumbnail takes too long
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda: self._show_loading_indicator() if not self.thumbnail_loaded else None)
+        timer.start(1000)  # 1 second timeout
+                
+        # Request the thumbnail
         THUMBNAIL_MANAGER.get_async(
             self.file_info['path'],
             QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT),
             update_thumbnail
         )
+        
+    def _show_loading_indicator(self):
+        """Show a loading indicator if thumbnail is taking time to load."""
+        if self.thumbnail_loaded:
+            return
+            
+        # Only add loading indicator for video files
+        if self.file_info['type'] != 'video':
+            return
+            
+        # Create loading text overlay
+        pixmap = self.icon_label.pixmap()
+        if pixmap and not pixmap.isNull():
+            painter = QPainter(pixmap)
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8))
+            painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "Loading video...")
+            painter.end()
+            self.icon_label.setPixmap(pixmap)
+            
+            # Set a timer to retry in 2 seconds if still not loaded
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(2000, self._handle_thumbnail_timeout)
+            
+    def _handle_thumbnail_timeout(self):
+        """Handle case when thumbnail takes too long to generate."""
+        if self.thumbnail_loaded:
+            return
+            
+        # Only for video files
+        if self.file_info['type'] != 'video':
+            return
+            
+        logging.warning(f"Thumbnail generation timeout for video: {self.file_info['path']}")
+        
+        # Try using test_video_thumbnail to directly generate
+        try:
+            from PyQt6.QtCore import QTimer
+            logging.info("Attempting direct thumbnail generation after timeout")
+            # Schedule a direct thumbnail test
+            QTimer.singleShot(100, lambda: self._try_direct_thumbnail())
+        except Exception as e:
+            logging.error(f"Error setting up direct thumbnail generation: {e}")
+            
+    def _try_direct_thumbnail(self):
+        """Try to directly generate a video thumbnail using the test function."""
+        if self.thumbnail_loaded:
+            return
+            
+        try:
+            from utils import video_thumbnail
+            
+            logging.info(f"Direct thumbnail generation for {self.file_info['path']}")
+            thumbnail_size = QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            
+            pixmap = video_thumbnail.generate_video_thumbnail(
+                self.file_info['path'],
+                thumbnail_size,
+                frame_time=1.0
+            )
+            
+            if pixmap and not pixmap.isNull():
+                self.icon_label.setPixmap(pixmap)
+                self.thumbnail_loaded = True
+                logging.info(f"Direct thumbnail generation successful for {self.file_info['path']}")
+            else:
+                logging.error(f"Direct thumbnail generation failed for {self.file_info['path']}")
+        except Exception as e:
+            logging.error(f"Error in direct thumbnail generation: {e}")
+            # If all else fails, show a better fallback
+            self._create_better_fallback()
     
     def _get_cache_key(self, file_path: str) -> str:
         """Generate a unique cache key for a file based on path and modification time."""
@@ -905,6 +1052,78 @@ class FileIconItem(QWidget):
         except Exception:
             # If there's any error, just use the file path
             return hashlib.md5(file_path.encode()).hexdigest()
+    
+    def _create_better_fallback(self):
+        """Create an improved fallback thumbnail for video files when all else fails."""
+        try:
+            # Create an attractive fallback with video format badge and play button
+            pixmap = QPixmap(self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            pixmap.fill(QColor(40, 40, 40))
+            
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            
+            # Get file extension 
+            filename = self.file_info['name']
+            ext = os.path.splitext(filename)[1].lower()
+            
+            # Background gradient
+            gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            gradient.setColorAt(0, QColor(40, 30, 30))
+            gradient.setColorAt(1, QColor(50, 40, 40))
+            painter.fillRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, gradient)
+            
+            # Create play button
+            play_size = min(self.THUMB_WIDTH, self.THUMB_HEIGHT) // 3
+            center_x = self.THUMB_WIDTH // 2
+            center_y = self.THUMB_HEIGHT // 2
+            
+            # Semitransparent dark circle
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(0, 0, 0, 150)))
+            painter.drawEllipse(center_x - play_size//2, center_y - play_size//2, 
+                              play_size, play_size)
+            
+            # Play triangle
+            painter.setBrush(QBrush(QColor(231, 76, 60)))
+            triangle = QPolygon([
+                QPoint(center_x - play_size//4, center_y - play_size//3),
+                QPoint(center_x + play_size//3, center_y),
+                QPoint(center_x - play_size//4, center_y + play_size//3)
+            ])
+            painter.drawPolygon(triangle)
+            
+            # Add video text at the bottom
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            text_rect = QRect(0, self.THUMB_HEIGHT - 20, self.THUMB_WIDTH, 20)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, "VIDEO PREVIEW")
+            
+            # Add format badge in top-right
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(231, 76, 60, 200)))
+            badge_width = 36
+            badge_height = 18
+            badge_x = self.THUMB_WIDTH - badge_width - 5
+            badge_y = 5
+            painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
+            
+            # Show extension in badge
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+            
+            painter.end()
+            
+            # Set the pixmap
+            self.icon_label.setPixmap(pixmap)
+            
+        except Exception as e:
+            logging.error(f"Error creating better fallback: {e}")
+            # If all else fails, do nothing - keep the default icon
 
 
 class FileListItem(QWidget):
@@ -1772,3 +1991,43 @@ class FileListWidget(QWidget):
         widget = self.list_widget.itemWidget(item)
         if widget and hasattr(widget, 'file_info'):
             self.file_selected.emit(widget.file_info) 
+
+# Add a helper function at the bottom of the file
+def test_video_thumbnail(file_path):
+    """Test function to directly generate a video thumbnail and verify it works.
+    Can be called from a debugger or command line to test the video thumbnailing.
+    
+    Args:
+        file_path: Path to a video file to test
+        
+    Returns:
+        True if thumbnail generation succeeded, False otherwise
+    """
+    try:
+        from PyQt6.QtCore import QSize
+        from utils import video_thumbnail
+        
+        logger = logging.getLogger('VideoThumbnailTest')
+        logger.setLevel(logging.DEBUG)
+        
+        # Check if OpenCV is available
+        if not video_thumbnail.OPENCV_AVAILABLE:
+            logger.error("OpenCV is not available")
+            return False
+            
+        logger.info(f"Generating thumbnail for {file_path}")
+        pixmap = video_thumbnail.generate_video_thumbnail(
+            file_path,
+            QSize(200, 150),
+            frame_time=1.0
+        )
+        
+        if pixmap and not pixmap.isNull():
+            logger.info("Successfully generated thumbnail")
+            return True
+        else:
+            logger.error("Failed to generate thumbnail (null pixmap)")
+            return False
+    except Exception as e:
+        logger.exception(f"Error testing video thumbnail: {e}")
+        return False

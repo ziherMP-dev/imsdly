@@ -246,7 +246,12 @@ class SDCardPanel(QWidget):
                 border-bottom-left-radius: 4px;
             }
             QPushButton:checked {
-                background-color: #0d6efd;
+                background-color: #222;
+                color: #fff;
+                border: 1px solid #444;
+                padding: 5px 11px 5px 11px;
+                border-right: 2px solid #444;
+                border-bottom: 2px solid #444;
             }
             QPushButton:hover:!checked {
                 background-color: #444;
@@ -266,7 +271,12 @@ class SDCardPanel(QWidget):
                 padding: 6px 12px;
             }
             QPushButton:checked {
-                background-color: #0d6efd;
+                background-color: #222;
+                color: #fff;
+                border: 1px solid #444;
+                padding: 5px 11px 5px 11px;
+                border-right: 2px solid #444;
+                border-bottom: 2px solid #444;
             }
             QPushButton:hover:!checked {
                 background-color: #444;
@@ -288,7 +298,12 @@ class SDCardPanel(QWidget):
                 border-bottom-right-radius: 4px;
             }
             QPushButton:checked {
-                background-color: #0d6efd;
+                background-color: #222;
+                color: #fff;
+                border: 1px solid #444;
+                padding: 5px 11px 5px 11px;
+                border-right: 2px solid #444;
+                border-bottom: 2px solid #444;
             }
             QPushButton:hover:!checked {
                 background-color: #444;
