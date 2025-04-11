@@ -736,19 +736,19 @@ class FileIconItem(QWidget):
             painter.setBrush(QBrush(QColor(241, 196, 15)))
             painter.drawEllipse(sun_x, sun_y, sun_size, sun_size)
             
-            # Draw extension
-            if ext in ['.heic', '.heif', '.raw', '.cr2', '.nef', '.arw', '.dng']:
-                # Highlight special formats with badge
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QBrush(QColor(41, 128, 185, 220)))
-                badge_x = self.THUMB_WIDTH - 40
-                badge_y = self.THUMB_HEIGHT - 20
-                painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
-                
-                painter.setPen(QColor(255, 255, 255))
-                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-                badge_rect = QRect(badge_x, badge_y, 36, 16)
-                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext[1:].upper())
+            # Draw format badge for all image files
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(41, 128, 185, 220)))
+            badge_x = self.THUMB_WIDTH - 40
+            badge_y = 10  # At top to avoid overlap with filename
+            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, 36, 16)
+            # Display extension without leading dot, uppercase
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
             
         elif file_type == 'video':
             # For video files
@@ -768,6 +768,11 @@ class FileIconItem(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(231, 76, 60, 200))
             
+            # Define center coordinates and play button size
+            center_x = self.THUMB_WIDTH // 2
+            center_y = self.THUMB_HEIGHT // 2
+            play_size = min(self.THUMB_WIDTH, self.THUMB_HEIGHT) // 3
+            
             # Create play button triangle
             play_triangle = QPolygon([
                 QPoint(self.THUMB_WIDTH // 2 - 15, self.THUMB_HEIGHT // 2 - 15),
@@ -776,37 +781,39 @@ class FileIconItem(QWidget):
             ])
             painter.drawPolygon(play_triangle)
             
-            # Draw badge with video duration if available
-            duration = self.file_info.get('duration', 0)
-            if duration > 0:
-                mins = int(duration / 60)
-                secs = int(duration % 60)
-                duration_text = f"{mins}:{secs:02d}"
-                
-                # Draw badge background
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QBrush(QColor(0, 0, 0, 180)))
-                badge_x = self.THUMB_WIDTH - 44
-                badge_y = self.THUMB_HEIGHT - 20
-                painter.drawRoundedRect(badge_x, badge_y, 40, 16, 4, 4)
-                
-                # Draw duration text
-                painter.setPen(QColor(255, 255, 255))
-                painter.setFont(QFont("Arial", 8))
-                badge_rect = QRect(badge_x, badge_y, 40, 16)
-                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, duration_text)
-            else:
-                # Draw "VIDEO" badge
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QBrush(QColor(231, 76, 60, 180)))
-                badge_x = self.THUMB_WIDTH - 44
-                badge_y = self.THUMB_HEIGHT - 20
-                painter.drawRoundedRect(badge_x, badge_y, 40, 16, 4, 4)
-                
-                painter.setPen(QColor(255, 255, 255))
-                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-                badge_rect = QRect(badge_x, badge_y, 40, 16)
-                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, "VIDEO")
+            # Add circular border around play button
+            painter.setPen(QPen(QColor(231, 76, 60, 150), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(center_x - play_size*2//3, center_y - play_size*2//3, 
+                                play_size*4//3, play_size*4//3)
+                                
+            # Add film strip at bottom
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(231, 76, 60, 100)))
+            strip_y = self.THUMB_HEIGHT - 15
+            strip_height = 10
+            painter.drawRect(5, strip_y, self.THUMB_WIDTH - 10, strip_height)
+            
+            # Add film holes
+            painter.setBrush(QBrush(QColor(40, 30, 30)))
+            hole_width = 6
+            for x in range(10, self.THUMB_WIDTH - 10, 20):
+                painter.drawRect(x, strip_y + 2, hole_width, strip_height - 4)
+            
+            # Move format badge to top-right corner instead of bottom to avoid overlap with filename
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(192, 57, 43, 220)))
+            badge_x = self.THUMB_WIDTH - 40
+            badge_y = 10  # Moved to top instead of bottom
+            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, 36, 16)
+            
+            # Show extension in badge
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
         else:
             # For other files
             gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
@@ -834,7 +841,22 @@ class FileIconItem(QWidget):
                     doc_rect.top() + y_offset
                 )
             
-            # Draw extension text
+            # Draw extension badge for all other files (not just those with extensions)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(80, 80, 80, 180)))
+            badge_x = self.THUMB_WIDTH - 40
+            badge_y = 10  # Move to top for consistency
+            painter.drawRoundedRect(badge_x, badge_y, 32, 16, 4, 4)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, 32, 16)
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            if not ext:
+                ext_text = "FILE"
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+            
+            # Draw secondary format indicator in the document
             if ext:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QBrush(QColor(80, 80, 80, 180)))
@@ -845,7 +867,7 @@ class FileIconItem(QWidget):
                 painter.setPen(QColor(255, 255, 255))
                 painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
                 badge_rect = QRect(badge_x, badge_y, 32, 16)
-                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext[1:].upper())
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
         
         # Add subtle "loading" indicator at bottom
         painter.setPen(QPen(QColor(255, 255, 255, 100), 1))
@@ -988,14 +1010,290 @@ class FileListItem(QWidget):
             return hashlib.md5(file_path.encode()).hexdigest()
 
 
+class FileIconsItem(QWidget):
+    """Widget for displaying a file item in the icons view (without thumbnails)."""
+    
+    # Icon dimensions
+    ICON_WIDTH = 120
+    ICON_HEIGHT = 90
+    
+    def __init__(self, file_info: Dict, parent=None):
+        super().__init__(parent)
+        self.file_info = file_info
+        self.setup_ui()
+        
+    def setup_ui(self):
+        """Set up the UI components."""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        # Create icon container
+        self.icon_label = QLabel()
+        self.icon_label.setFixedSize(self.ICON_WIDTH, self.ICON_HEIGHT)
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setStyleSheet("""
+            QLabel {
+                background-color: #2a2a2a;
+                border-radius: 4px;
+            }
+        """)
+        
+        # Set icon based on file type
+        self._set_icon()
+        
+        layout.addWidget(self.icon_label)
+        
+        # File name (truncated if too long)
+        name = self.file_info['name']
+        if len(name) > 20:
+            # Truncate with ellipsis
+            ext = os.path.splitext(name)[1]
+            base = os.path.splitext(name)[0]
+            if len(base) > 17:
+                name = base[:17] + "..." + ext
+        
+        name_label = QLabel(name)
+        name_label.setFont(QFont("Arial", 9))
+        name_label.setStyleSheet("color: white;")
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        name_label.setWordWrap(True)
+        layout.addWidget(name_label)
+        
+        # Add file size beneath the name
+        size_kb = self.file_info['size'] / 1024
+        size_mb = size_kb / 1024
+        size_text = f"{size_mb:.1f} MB" if size_mb >= 1 else f"{size_kb:.1f} KB"
+        
+        size_label = QLabel(size_text)
+        size_label.setFont(QFont("Arial", 8))
+        size_label.setStyleSheet("color: #aaa;")
+        size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(size_label)
+        
+        # Set fixed size for consistent grid appearance
+        self.setFixedSize(self.ICON_WIDTH + 20, self.ICON_HEIGHT + 40)
+        
+        # Show full details in tooltip
+        details_text = (
+            f"Name: {self.file_info['name']}\n"
+            f"Size: {size_text}\n"
+            f"Created: {self.file_info['created'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Modified: {self.file_info['modified'].strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        self.setToolTip(details_text)
+        
+        # Styling
+        self.setStyleSheet("""
+            QWidget {
+                background-color: transparent;
+                border-radius: 6px;
+            }
+            QWidget:hover {
+                background-color: #2a2a2a;
+            }
+        """)
+    
+    def _set_icon(self):
+        """Set an icon based on file type."""
+        # Create a background for the icon
+        pixmap = QPixmap(self.ICON_WIDTH, self.ICON_HEIGHT)
+        pixmap.fill(QColor(34, 34, 34))  # Slightly darker than the background
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        file_type = self.file_info['type']
+        filename = self.file_info['name']
+        ext = os.path.splitext(filename)[1].lower()
+        
+        # Draw a rounded rectangle background
+        painter.setPen(QPen(QColor(50, 50, 50), 1))
+        painter.setBrush(QBrush(QColor(40, 40, 40)))
+        painter.drawRoundedRect(0, 0, self.ICON_WIDTH, self.ICON_HEIGHT, 6, 6)
+        
+        if file_type == 'image':
+            # For image files
+            gradient = QLinearGradient(0, 0, self.ICON_WIDTH, self.ICON_HEIGHT)
+            gradient.setColorAt(0, QColor(30, 30, 40))
+            gradient.setColorAt(1, QColor(34, 34, 44))
+            painter.fillRect(2, 2, self.ICON_WIDTH-4, self.ICON_HEIGHT-4, gradient)
+            
+            # Create "image placeholder" icon with frame
+            painter.setPen(QPen(QColor(80, 80, 100), 1))
+            painter.setBrush(QBrush(QColor(52, 152, 219, 40)))  # Light blue with transparency
+            
+            # Convert floats to integers for the rect
+            frame_x = int(self.ICON_WIDTH/4)
+            frame_y = int(self.ICON_HEIGHT/4)
+            frame_width = int(self.ICON_WIDTH/2)
+            frame_height = int(self.ICON_HEIGHT/2)
+            painter.drawRoundedRect(frame_x, frame_y, frame_width, frame_height, 4, 4)
+            
+            # Add mountain icon for photos
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(52, 152, 219)))
+            
+            # Draw a stylized mountain
+            mountains = QPolygon([
+                QPoint(int(self.ICON_WIDTH/4), int(self.ICON_HEIGHT*3/4)),
+                QPoint(int(self.ICON_WIDTH*3/8), int(self.ICON_HEIGHT*2/4)),
+                QPoint(int(self.ICON_WIDTH/2), int(self.ICON_HEIGHT*2.5/4)),
+                QPoint(int(self.ICON_WIDTH*5/8), int(self.ICON_HEIGHT*1.5/4)),
+                QPoint(int(self.ICON_WIDTH*3/4), int(self.ICON_HEIGHT*2/4)),
+                QPoint(int(self.ICON_WIDTH*3/4), int(self.ICON_HEIGHT*3/4)),
+            ])
+            painter.drawPolygon(mountains)
+            
+            # Draw a sun
+            sun_x = int(self.ICON_WIDTH*5/8)
+            sun_y = int(self.ICON_HEIGHT/4)
+            sun_size = int(self.ICON_WIDTH/8)
+            painter.setBrush(QBrush(QColor(241, 196, 15)))
+            painter.drawEllipse(sun_x, sun_y, sun_size, sun_size)
+            
+            # Draw format badge for all image files
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(41, 128, 185, 220)))
+            badge_x = self.ICON_WIDTH - 40
+            badge_y = 10  # At top to avoid overlap with filename
+            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, 36, 16)
+            # Display extension without leading dot, uppercase
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+            
+        elif file_type == 'video':
+            # For video files
+            gradient = QLinearGradient(0, 0, self.ICON_WIDTH, self.ICON_HEIGHT)
+            gradient.setColorAt(0, QColor(40, 30, 30))
+            gradient.setColorAt(1, QColor(44, 34, 34))
+            painter.fillRect(2, 2, self.ICON_WIDTH-4, self.ICON_HEIGHT-4, gradient)
+            
+            # Create "video placeholder" icon
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(231, 76, 60, 200)))  # Red with transparency
+            
+            # Draw play button
+            center_x = self.ICON_WIDTH // 2
+            center_y = self.ICON_HEIGHT // 2
+            play_size = min(self.ICON_WIDTH, self.ICON_HEIGHT) // 3
+            
+            # Triangle play icon
+            play_triangle = QPolygon([
+                QPoint(center_x - play_size//2, center_y - play_size//2),
+                QPoint(center_x + play_size//2, center_y),
+                QPoint(center_x - play_size//2, center_y + play_size//2)
+            ])
+            painter.drawPolygon(play_triangle)
+            
+            # Add circular border around play button
+            painter.setPen(QPen(QColor(231, 76, 60, 150), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(center_x - play_size*2//3, center_y - play_size*2//3, 
+                                play_size*4//3, play_size*4//3)
+                                
+            # Add film strip at bottom
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(231, 76, 60, 100)))
+            strip_y = self.ICON_HEIGHT - 15
+            strip_height = 10
+            painter.drawRect(5, strip_y, self.ICON_WIDTH - 10, strip_height)
+            
+            # Add film holes
+            painter.setBrush(QBrush(QColor(40, 30, 30)))
+            hole_width = 6
+            for x in range(10, self.ICON_WIDTH - 10, 20):
+                painter.drawRect(x, strip_y + 2, hole_width, strip_height - 4)
+            
+            # Move format badge to top-right corner instead of bottom to avoid overlap with filename
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(192, 57, 43, 220)))
+            badge_x = self.ICON_WIDTH - 40
+            badge_y = 10  # Moved to top instead of bottom
+            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, 36, 16)
+            
+            # Show extension in badge
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+        else:
+            # For other files
+            gradient = QLinearGradient(0, 0, self.ICON_WIDTH, self.ICON_HEIGHT)
+            gradient.setColorAt(0, QColor(30, 35, 30))
+            gradient.setColorAt(1, QColor(34, 39, 34))
+            painter.fillRect(2, 2, self.ICON_WIDTH-4, self.ICON_HEIGHT-4, gradient)
+            
+            # Draw document icon
+            painter.setPen(QPen(QColor(100, 100, 100), 1))
+            painter.setBrush(QBrush(QColor(60, 60, 60)))
+            
+            # Document shape
+            doc_x = self.ICON_WIDTH//2 - 20
+            doc_y = self.ICON_HEIGHT//2 - 25
+            doc_rect = QRect(doc_x, doc_y, 40, 50)
+            painter.drawRect(doc_rect)
+            
+            # Document lines
+            painter.setPen(QPen(QColor(120, 120, 120), 1))
+            for y_offset in range(10, 40, 8):
+                painter.drawLine(
+                    doc_rect.left() + 5, 
+                    doc_rect.top() + y_offset,
+                    doc_rect.right() - 5, 
+                    doc_rect.top() + y_offset
+                )
+            
+            # Draw extension badge for all other files (not just those with extensions)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(80, 80, 80, 180)))
+            badge_x = self.ICON_WIDTH - 40
+            badge_y = 10  # Move to top for consistency
+            painter.drawRoundedRect(badge_x, badge_y, 32, 16, 4, 4)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, 32, 16)
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            if not ext:
+                ext_text = "FILE"
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+            
+            # Draw secondary format indicator in the document
+            if ext:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor(80, 80, 80, 180)))
+                badge_x = self.ICON_WIDTH//2 - 16
+                badge_y = self.ICON_HEIGHT//2 + 12
+                painter.drawRoundedRect(badge_x, badge_y, 32, 16, 4, 4)
+                    
+                painter.setPen(QColor(255, 255, 255))
+                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+                badge_rect = QRect(badge_x, badge_y, 32, 16)
+                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+                
+        painter.end()
+        
+        # Set the pixmap
+        self.icon_label.setPixmap(pixmap)
+
+
 class FileListWidget(QWidget):
     """Widget for displaying a list of files."""
     
     file_selected = pyqtSignal(dict)
+    files_selected = pyqtSignal(list)  # New signal for multi-selection
     
     # View modes
     LIST_VIEW = 0
-    ICON_VIEW = 1
+    ICONS_VIEW = 1
+    THUMBNAIL_VIEW = 2
     
     # Thumbnail size for icon view
     ICON_SIZE = QSize(120, 90)
@@ -1042,16 +1340,28 @@ class FileListWidget(QWidget):
         
         layout.addLayout(top_bar)
         
-        # File list widget
+        # File list widget with multi-selection support
         self.list_widget = QListWidget()
         self.list_widget.setFrameShape(self.list_widget.Shape.NoFrame)
         self.list_widget.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
+        self.list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)  # Enable multi-selection
         self.list_widget.itemClicked.connect(self._handle_item_clicked)
+        self.list_widget.itemSelectionChanged.connect(self._handle_selection_changed)  # Handle selection changes
         
         # Connect scroll events to prioritize visible thumbnails
         self.list_widget.verticalScrollBar().valueChanged.connect(self._handle_scroll)
         
         layout.addWidget(self.list_widget)
+        
+        # Selection indicator (shows count of selected items)
+        self.selection_indicator = QLabel()
+        self.selection_indicator.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.selection_indicator.setStyleSheet("color: #aaa; background-color: #2a2a2a; padding: 5px; border-top: 1px solid #333;")
+        self.selection_indicator.hide()  # Hidden by default
+        layout.addWidget(self.selection_indicator)
+        
+        # Install event filter for keyboard shortcuts
+        self.list_widget.installEventFilter(self)
         
         # Styling
         self.list_widget.setStyleSheet("""
@@ -1082,6 +1392,43 @@ class FileListWidget(QWidget):
             }
         """)
     
+    def eventFilter(self, obj, event):
+        """Handle keyboard shortcuts."""
+        if obj == self.list_widget and event.type() == QEvent.Type.KeyPress:
+            # Handle Ctrl+A (select all)
+            if event.key() == Qt.Key.Key_A and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
+                self.list_widget.selectAll()
+                return True
+        return super().eventFilter(obj, event)
+    
+    def _handle_selection_changed(self):
+        """Handle selection changes."""
+        selected_items = self.list_widget.selectedItems()
+        selected_count = len(selected_items)
+        
+        # Update selection indicator
+        if selected_count > 0:
+            self.selection_indicator.setText(f"{selected_count} item{'s' if selected_count > 1 else ''} selected")
+            self.selection_indicator.show()
+        else:
+            self.selection_indicator.hide()
+        
+        # Process single selection for backward compatibility
+        if selected_count == 1:
+            widget = self.list_widget.itemWidget(selected_items[0])
+            if widget and hasattr(widget, 'file_info'):
+                self.file_selected.emit(widget.file_info)
+        
+        # Collect selected file info for multi-select signal
+        selected_files = []
+        for item in selected_items:
+            widget = self.list_widget.itemWidget(item)
+            if widget and hasattr(widget, 'file_info'):
+                selected_files.append(widget.file_info)
+        
+        # Emit the multi-select signal
+        self.files_selected.emit(selected_files)
+    
     def _handle_scroll(self):
         """Handle scroll events to prioritize visible thumbnails."""
         # Reset the timer to prevent multiple calls during continuous scrolling
@@ -1090,7 +1437,7 @@ class FileListWidget(QWidget):
         
     def _load_visible_thumbnails(self):
         """Prioritize loading thumbnails for currently visible items."""
-        if self.view_mode != self.ICON_VIEW:
+        if self.view_mode != self.THUMBNAIL_VIEW:
             return
             
         # Get visible items
@@ -1208,60 +1555,25 @@ class FileListWidget(QWidget):
         """Set the view mode.
         
         Args:
-            mode: The view mode (LIST_VIEW or ICON_VIEW)
+            mode: The view mode (LIST_VIEW, ICONS_VIEW, or THUMBNAIL_VIEW)
         """
-        if mode not in [self.LIST_VIEW, self.ICON_VIEW]:
+        if mode not in [self.LIST_VIEW, self.ICONS_VIEW, self.THUMBNAIL_VIEW]:
             return
             
         # Store current view mode for comparison
         old_mode = self.view_mode
         self.view_mode = mode
         
-        # If switching to icon view, show a brief loading message
-        if mode == self.ICON_VIEW and old_mode != self.ICON_VIEW:
-            self.loading_label.setText("Switching to icon view...")
+        # If switching to thumbnail view, show a brief loading message
+        if mode == self.THUMBNAIL_VIEW and old_mode != self.THUMBNAIL_VIEW:
+            self.loading_label.setText("Switching to thumbnail view...")
             self.loading_label.show()
             
         # Force immediate processing of events to update UI
         QApplication.processEvents()
         
         # Update the list widget view mode
-        if mode == self.ICON_VIEW:
-            self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
-            self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
-            self.list_widget.setGridSize(QSize(160, 160))
-            self.list_widget.setSpacing(10)
-            self.list_widget.setWordWrap(True)
-            self.list_widget.setUniformItemSizes(True)
-            
-            # Change the list widget styling for icon view
-            self.list_widget.setStyleSheet("""
-                QListWidget {
-                    background-color: #1e1e1e;
-                    border: none;
-                    outline: none;
-                }
-                QListWidget::item {
-                    padding: 5px;
-                    border-radius: 6px;
-                }
-                QListWidget::item:selected {
-                    background: #3a3a3a;
-                }
-                QScrollBar:vertical {
-                    background: #1e1e1e;
-                    width: 6px;
-                    border-radius: 3px;
-                }
-                QScrollBar::handle:vertical {
-                    background: #444;
-                    border-radius: 3px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background: #555;
-                }
-            """)
-        else:
+        if mode == self.LIST_VIEW:
             self.list_widget.setViewMode(QListWidget.ViewMode.ListMode)
             self.list_widget.setResizeMode(QListWidget.ResizeMode.Fixed)
             self.list_widget.setGridSize(QSize())
@@ -1297,6 +1609,41 @@ class FileListWidget(QWidget):
                     background: #555;
                 }
             """)
+        else:  # ICONS_VIEW or THUMBNAIL_VIEW
+            self.list_widget.setViewMode(QListWidget.ViewMode.IconMode)
+            self.list_widget.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self.list_widget.setGridSize(QSize(160, 160))
+            self.list_widget.setSpacing(10)
+            self.list_widget.setWordWrap(True)
+            self.list_widget.setUniformItemSizes(True)
+            
+            # Change the list widget styling for icon view
+            self.list_widget.setStyleSheet("""
+                QListWidget {
+                    background-color: #1e1e1e;
+                    border: none;
+                    outline: none;
+                }
+                QListWidget::item {
+                    padding: 5px;
+                    border-radius: 6px;
+                }
+                QListWidget::item:selected {
+                    background: #3a3a3a;
+                }
+                QScrollBar:vertical {
+                    background: #1e1e1e;
+                    width: 6px;
+                    border-radius: 3px;
+                }
+                QScrollBar::handle:vertical {
+                    background: #444;
+                    border-radius: 3px;
+                }
+                QScrollBar::handle:vertical:hover {
+                    background: #555;
+                }
+            """)
         
         # Force immediate processing of events to update styling
         QApplication.processEvents()
@@ -1308,8 +1655,8 @@ class FileListWidget(QWidget):
             if old_mode != mode:
                 self.update_view()
             
-        # Load visible thumbnails if in icon view - do this immediately but with a low delay
-        if mode == self.ICON_VIEW:
+        # Load visible thumbnails if in thumbnail view - do this immediately but with a low delay
+        if mode == self.THUMBNAIL_VIEW:
             QTimer.singleShot(50, self._load_visible_thumbnails)
     
     def clear_thumbnail_cache(self):
@@ -1368,34 +1715,35 @@ class FileListWidget(QWidget):
             self.status_label.setText(f"{len(files)} files found ({', '.join(status_parts)})")
         
         # Reset thumbnail counters
-        self.pending_thumbnails = len(files)
+        self.pending_thumbnails = len(files) if self.view_mode == self.THUMBNAIL_VIEW else 0
         self.loaded_thumbnails = 0
         
-        # Show loading indicator
+        # Show loading indicator only for thumbnail view
         if self.pending_thumbnails > 0:
             self.loading_label.setText(f"Loading thumbnails... 0% (0/{self.pending_thumbnails})")
             self.loading_label.show()
             self.is_loading = True
-        
-        # Mark loading as started
-        self.is_loading = True
+        else:
+            self.loading_label.hide()
+            self.is_loading = False
         
         # Add files to the list widget based on the current view mode
         for file_info in files:
             item = QListWidgetItem(self.list_widget)
             
-            if self.view_mode == self.ICON_VIEW:
+            if self.view_mode == self.THUMBNAIL_VIEW:
                 widget = FileIconItem(file_info)
                 # Don't automatically request thumbnails for all items
                 # They will be requested based on visibility
                 item.setSizeHint(widget.sizeHint())
+            elif self.view_mode == self.ICONS_VIEW:
+                # For icons view, use the FileIconsItem class that displays icons without thumbnails
+                widget = FileIconsItem(file_info)
+                item.setSizeHint(widget.sizeHint())
             else:
                 widget = FileListItem(file_info)
                 item.setSizeHint(widget.sizeHint())
-                
-                # For list view icons, just track them directly
-                self._handle_thumbnail_status_changed(None, None)
-                
+            
             self.list_widget.setItemWidget(item, widget)
             
             # Force UI update periodically to show progress
@@ -1411,7 +1759,7 @@ class FileListWidget(QWidget):
         QApplication.processEvents()
         
         # Load visible thumbnails immediately for a better user experience
-        if self.view_mode == self.ICON_VIEW:
+        if self.view_mode == self.THUMBNAIL_VIEW:
             # Load immediately, but in a non-blocking way
             QTimer.singleShot(10, self._load_visible_thumbnails)
             

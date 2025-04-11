@@ -135,7 +135,7 @@ class FileSystemModel:
         """Sort files by the specified key and order.
         
         Args:
-            key: Sort key ('name', 'size', 'type')
+            key: Sort key ('name', 'size', 'type', 'date')
             order: Sort order ('asc' or 'desc')
         """
         if not self.files:
@@ -148,7 +148,8 @@ class FileSystemModel:
         sort_functions: Dict[str, Callable[[Dict], Any]] = {
             "name": lambda x: x["name"].lower(),
             "size": lambda x: x["size"],
-            "type": lambda x: (x["type"], os.path.splitext(x["name"])[1].lower())
+            "type": lambda x: (x["type"], os.path.splitext(x["name"])[1].lower()),
+            "date": lambda x: x["modified"]  # Sort by modification date by default
         }
         
         if key in sort_functions:

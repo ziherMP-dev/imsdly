@@ -39,6 +39,13 @@ class SDCardPanel(QWidget):
         # Control bar
         control_bar = QHBoxLayout()
         
+        # Create a fixed container for scan button and filter toggles
+        left_controls = QWidget()
+        left_controls.setFixedWidth(300)  # Fixed width to prevent expanding
+        left_layout = QHBoxLayout(left_controls)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+        
         # Scan button
         self.scan_button = QPushButton("Scan Files")
         self.scan_button.setEnabled(False)
@@ -58,11 +65,12 @@ class SDCardPanel(QWidget):
                 color: #dee2e6;
             }
         """)
-        control_bar.addWidget(self.scan_button)
+        left_layout.addWidget(self.scan_button)
         
         # Filter buttons
         filter_layout = QHBoxLayout()
         filter_layout.setSpacing(0)
+        filter_layout.setContentsMargins(10, 0, 0, 0)  # Add left margin for spacing from scan button
         
         # Create button group for filter buttons (non-exclusive)
         self.filter_group = QButtonGroup()
@@ -202,7 +210,11 @@ class SDCardPanel(QWidget):
         photos_container.mousePressEvent = lambda e: self._toggle_photos()
         videos_container.mousePressEvent = lambda e: self._toggle_videos()
         
-        control_bar.addLayout(filter_layout)
+        # Add filter layout to left controls
+        left_layout.addLayout(filter_layout)
+        
+        # Add fixed left controls to main control bar
+        control_bar.addWidget(left_controls)
         
         # Filter status label
         self.filter_status_label = QLabel("Showing: All Media Files")
@@ -243,10 +255,30 @@ class SDCardPanel(QWidget):
         self.view_mode_group.addButton(self.list_view_button)
         view_buttons_layout.addWidget(self.list_view_button)
         
-        # Icon view button
-        self.icon_view_button = QPushButton("Thumbnails")
-        self.icon_view_button.setCheckable(True)
-        self.icon_view_button.setStyleSheet("""
+        # Icons view button (without thumbnails)
+        self.icons_view_button = QPushButton("Icons")
+        self.icons_view_button.setCheckable(True)
+        self.icons_view_button.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: white;
+                border: none;
+                padding: 6px 12px;
+            }
+            QPushButton:checked {
+                background-color: #0d6efd;
+            }
+            QPushButton:hover:!checked {
+                background-color: #444;
+            }
+        """)
+        self.view_mode_group.addButton(self.icons_view_button)
+        view_buttons_layout.addWidget(self.icons_view_button)
+        
+        # Thumbnails view button
+        self.thumbnail_view_button = QPushButton("Thumbnails")
+        self.thumbnail_view_button.setCheckable(True)
+        self.thumbnail_view_button.setStyleSheet("""
             QPushButton {
                 background-color: #333;
                 color: white;
@@ -262,8 +294,8 @@ class SDCardPanel(QWidget):
                 background-color: #444;
             }
         """)
-        self.view_mode_group.addButton(self.icon_view_button)
-        view_buttons_layout.addWidget(self.icon_view_button)
+        self.view_mode_group.addButton(self.thumbnail_view_button)
+        view_buttons_layout.addWidget(self.thumbnail_view_button)
         
         control_bar.addLayout(view_buttons_layout)
         
@@ -274,7 +306,8 @@ class SDCardPanel(QWidget):
         
         # Sort combobox
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems(["Name", "Size", "Type"])
+        self.sort_combo.addItems(["Name", "Date", "Size", "Type"])
+        self.sort_combo.setItemData(1, "Sort by modification date", Qt.ItemDataRole.ToolTipRole)
         self.sort_combo.setStyleSheet("""
             QComboBox {
                 background-color: #333;
@@ -326,6 +359,7 @@ class SDCardPanel(QWidget):
         # Create file list widget
         self.file_list = FileListWidget()
         self.file_list.file_selected.connect(self._handle_file_selected)
+        self.file_list.files_selected.connect(self._handle_files_selected)
         layout.addWidget(self.file_list)
         
         self.setLayout(layout)
@@ -354,7 +388,11 @@ class SDCardPanel(QWidget):
         
         # Connect view mode buttons
         self.list_view_button.clicked.connect(lambda: self._handle_view_mode_changed(self.file_list.LIST_VIEW))
-        self.icon_view_button.clicked.connect(lambda: self._handle_view_mode_changed(self.file_list.ICON_VIEW))
+        self.icons_view_button.clicked.connect(lambda: self._handle_view_mode_changed(self.file_list.ICONS_VIEW))
+        self.thumbnail_view_button.clicked.connect(lambda: self._handle_view_mode_changed(self.file_list.THUMBNAIL_VIEW))
+        
+        # Connect selection signals
+        self.file_list.files_selected.connect(self._handle_files_selected)
         
     def _handle_view_mode_changed(self, mode: int) -> None:
         """Handle view mode change.
@@ -367,7 +405,8 @@ class SDCardPanel(QWidget):
         
         # Update button states
         self.list_view_button.setChecked(mode == self.file_list.LIST_VIEW)
-        self.icon_view_button.setChecked(mode == self.file_list.ICON_VIEW)
+        self.icons_view_button.setChecked(mode == self.file_list.ICONS_VIEW)
+        self.thumbnail_view_button.setChecked(mode == self.file_list.THUMBNAIL_VIEW)
         
         # Update the file list view mode
         self.file_list.set_view_mode(mode)
@@ -447,19 +486,11 @@ class SDCardPanel(QWidget):
         Args:
             button: The clicked filter button
         """
-        # Update filter status label
-        active_filters = []
-        if self.photos_button.isChecked():
-            active_filters.append("Photos")
-        if self.videos_button.isChecked():
-            active_filters.append("Videos")
-            
-        if not active_filters:
+        # Update filter status label - only show "All Files" when both filters are OFF
+        if not self.photos_button.isChecked() and not self.videos_button.isChecked():
             self.filter_status_label.setText("Showing: All Files")
-        elif len(active_filters) == 2:
-            self.filter_status_label.setText("Showing: All Media Files")
         else:
-            self.filter_status_label.setText(f"Showing: {' and '.join(active_filters)}")
+            self.filter_status_label.setText("")
         
         if self.file_model and self.selected_card:
             # Get current filter settings
@@ -484,6 +515,7 @@ class SDCardPanel(QWidget):
         # Map UI text to model sort key
         sort_map = {
             "Name": "name",
+            "Date": "date",
             "Size": "size",
             "Type": "type"
         }
@@ -547,8 +579,6 @@ class SDCardPanel(QWidget):
     def _handle_scan_clicked(self) -> None:
         """Handle scan button click."""
         if self.selected_card:
-            self.status_label.setText(f"Scanning {self.selected_card.get('name', 'SD Card')}...")
-            
             # Get current filter settings
             file_types = []
             if self.photos_button.isChecked():
@@ -558,38 +588,12 @@ class SDCardPanel(QWidget):
                 
             # If no filters are selected, scan for all files
             if not file_types:
-                self.status_label.setText("Scanning all files...")
                 self.file_model.scan_directory()
             else:
-                # Update status with what we're scanning for
-                scan_types = []
-                if 'image' in file_types:
-                    scan_types.append("photos")
-                if 'video' in file_types:
-                    scan_types.append("videos")
-                self.status_label.setText(f"Scanning {' and '.join(scan_types)}...")
                 self.file_model.scan_directory(file_types=file_types)
             
             # Update the file list with the scan results
             self.file_list.set_file_model(self.file_model, file_types=file_types)
-            
-            # Update status with scan results
-            files = self.file_model.get_files()
-            if file_types:
-                files = [f for f in files if f['type'] in file_types]
-            
-            type_counts = {}
-            for file in files:
-                file_type = file['type']
-                type_counts[file_type] = type_counts.get(file_type, 0) + 1
-                
-            status_parts = []
-            if 'image' in type_counts:
-                status_parts.append(f"{type_counts['image']} photos")
-            if 'video' in type_counts:
-                status_parts.append(f"{type_counts['video']} videos")
-                
-            self.status_label.setText(f"Found {len(files)} files ({', '.join(status_parts)})")
         
     def set_card_info(self, card_info: dict):
         """Set the card information and update the view.
@@ -627,6 +631,7 @@ class SDCardPanel(QWidget):
         # Update sort UI to match current settings
         sort_map_reverse = {
             "name": "Name",
+            "date": "Date",
             "size": "Size",
             "type": "Type"
         }
@@ -685,19 +690,11 @@ class SDCardPanel(QWidget):
             self.photos_button.setEnabled(False)
             self.videos_button.setEnabled(False)
         
-        # Update filter status label
-        active_filters = []
-        if self.photos_button.isChecked():
-            active_filters.append("Photos")
-        if self.videos_button.isChecked():
-            active_filters.append("Videos")
-            
-        if not active_filters:
+        # Update filter status label - only show "All Files" when both filters are OFF
+        if not self.photos_button.isChecked() and not self.videos_button.isChecked():
             self.filter_status_label.setText("Showing: All Files")
-        elif len(active_filters) == 2:
-            self.filter_status_label.setText("Showing: All Media Files")
         else:
-            self.filter_status_label.setText(f"Showing: {' and '.join(active_filters)}")
+            self.filter_status_label.setText("")
         
         # Update file list with current filters
         file_types = []
@@ -714,5 +711,18 @@ class SDCardPanel(QWidget):
         Args:
             file_info: Dictionary containing information about the selected file
         """
-        # Handle file selection
-        print(f"Selected file: {file_info['name']}") 
+        # Handle single file selection
+        print(f"Selected file: {file_info['name']}")
+        
+    def _handle_files_selected(self, files: List[Dict[str, Any]]) -> None:
+        """Handle multiple files selected.
+        
+        Args:
+            files: List of file info dictionaries for selected files
+        """
+        # Report selected files count
+        if files:
+            count = len(files)
+            print(f"Selected {count} file{'s' if count > 1 else ''}")
+        else:
+            print("No files selected") 
