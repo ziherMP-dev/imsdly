@@ -60,7 +60,7 @@ def add_filmstrip_overlay(pixmap: QPixmap) -> QPixmap:
     painter.drawRect(width - strip_width, 0, strip_width, height)
     
     # Draw sprocket holes (left side)
-    painter.setBrush(QBrush(QColor(40, 40, 40, 255)))
+    painter.setBrush(QBrush(QColor(175, 177, 179, 255)))
     
     # Calculate number of holes based on spacing
     hole_count = height // (hole_height + hole_spacing)
@@ -145,10 +145,10 @@ def generate_optimized_thumbnail(
         
         # Add overlays if successful
         if pixmap and not pixmap.isNull():
-            duration = _get_video_duration(file_path)
+            # duration = _get_video_duration(file_path)
             pixmap = add_filmstrip_overlay(pixmap)  # Use filmstrip overlay instead of play button
-            if duration > 0:
-                pixmap = video_thumbnail.add_duration_indicator(pixmap, duration)
+            # if duration > 0:
+            #     pixmap = video_thumbnail.add_duration_indicator(pixmap, duration)
         
         elapsed = time.time() - start_time
         return pixmap, elapsed

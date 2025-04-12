@@ -35,6 +35,7 @@ from typing import Dict, List, Optional, Tuple, Any, Set, Callable
 from queue import Queue, Empty
 from threading import Thread
 import sys
+import platform
 
 # Configure logging
 logger = logging.getLogger("FileList")
@@ -55,6 +56,9 @@ from PyQt6.QtWidgets import (
     QToolTip, QScrollArea, QGridLayout, QSplitter, QProgressBar, QCheckBox,
     QComboBox, QInputDialog, QLineEdit, QStyle
 )
+
+# Add import for move_to_trash function
+from send2trash import send2trash
 
 # Initialize video thumbnail availability flags
 VIDEO_THUMBNAIL_AVAILABLE = False
@@ -1700,11 +1704,48 @@ class FileIconsItem(QWidget):
         self.icon_label.setPixmap(pixmap)
 
 
+class NoDragListWidget(QListWidget):
+    """Custom QListWidget that prevents dragging operations but allows rubber band selection."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Configure selection and drag settings
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setDragEnabled(False)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        
+    def mousePressEvent(self, event):
+        """Pass through the mouse press event to allow rubber band selection."""
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Allow mouse move for rubber band selection but block drag operations."""
+        # Skip the parent implementation's drag behavior by simulating mouse movement
+        # but without the drag operation
+        if self.state() != QAbstractItemView.State.DragSelectingState:
+            # We're not in rubber band selection mode,
+            # so we need to detect if we should be dragging
+            super().mouseMoveEvent(event)
+            # If after calling parent's mouseMoveEvent, we're in dragging state,
+            # cancel the drag state
+            if self.state() == QAbstractItemView.State.DraggingState:
+                self.setState(QAbstractItemView.State.NoState)
+        else:
+            # We're in rubber band selection, so allow it
+            super().mouseMoveEvent(event)
+
+    def startDrag(self, supportedActions):
+        """Completely disable drag operations."""
+        # Don't call the parent implementation
+        pass
+
+
 class FileListWidget(QWidget):
     """Widget for displaying a list of files."""
     
     file_selected = pyqtSignal(dict)
     files_selected = pyqtSignal(list)  # New signal for multi-selection
+    files_deleted = pyqtSignal(list)   # Signal emitted when files are deleted
     
     # View modes
     LIST_VIEW = 0
@@ -1756,13 +1797,23 @@ class FileListWidget(QWidget):
         
         layout.addLayout(top_bar)
         
-        # File list widget with multi-selection support
-        self.list_widget = QListWidget()
+        # Use our custom no-drag list widget
+        self.list_widget = NoDragListWidget()
         self.list_widget.setFrameShape(self.list_widget.Shape.NoFrame)
         self.list_widget.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.list_widget.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)  # Enable multi-selection
+        
+        # Enable rubber band selection but disable drag functionality
+        self.list_widget.setDragEnabled(False)
+        self.list_widget.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        self.list_widget.setDefaultDropAction(Qt.DropAction.IgnoreAction)
+        self.list_widget.setDragDropOverwriteMode(False)
+        self.list_widget.setProperty("showDropIndicator", False)
+        self.list_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
+        
+        # Connect events
         self.list_widget.itemClicked.connect(self._handle_item_clicked)
-        self.list_widget.itemSelectionChanged.connect(self._handle_selection_changed)  # Handle selection changes
+        self.list_widget.itemSelectionChanged.connect(self._handle_selection_changed)
         
         # Connect scroll events to prioritize visible thumbnails
         self.list_widget.verticalScrollBar().valueChanged.connect(self._handle_scroll)
@@ -1775,6 +1826,29 @@ class FileListWidget(QWidget):
         self.selection_indicator.setStyleSheet("color: #aaa; background-color: #2a2a2a; padding: 5px; border-top: 1px solid #333;")
         self.selection_indicator.hide()  # Hidden by default
         layout.addWidget(self.selection_indicator)
+        
+        # Delete button (red rectangle at the bottom, hidden by default)
+        self.delete_button = QPushButton("Delete")
+        self.delete_button.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f;
+                color: white;
+                border: none;
+                padding: 8px;
+                font-weight: bold;
+                margin: 0;
+                min-height: 36px;
+            }
+            QPushButton:hover {
+                background-color: #f44336;
+            }
+            QPushButton:pressed {
+                background-color: #b71c1c;
+            }
+        """)
+        self.delete_button.clicked.connect(self._handle_delete_clicked)
+        self.delete_button.hide()  # Hidden by default
+        layout.addWidget(self.delete_button)
         
         # Install event filter for keyboard shortcuts
         self.list_widget.installEventFilter(self)
@@ -1807,13 +1881,18 @@ class FileListWidget(QWidget):
                 background: #555;
             }
         """)
-    
+
     def eventFilter(self, obj, event):
         """Handle keyboard shortcuts."""
         if obj == self.list_widget and event.type() == QEvent.Type.KeyPress:
             # Handle Ctrl+A (select all)
             if event.key() == Qt.Key.Key_A and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
                 self.list_widget.selectAll()
+                return True
+            # Handle Delete key to trigger delete action
+            elif event.key() == Qt.Key.Key_Delete:
+                if self.delete_button.isVisible():
+                    self._handle_delete_clicked()
                 return True
         return super().eventFilter(obj, event)
     
@@ -1826,8 +1905,12 @@ class FileListWidget(QWidget):
         if selected_count > 0:
             self.selection_indicator.setText(f"{selected_count} item{'s' if selected_count > 1 else ''} selected")
             self.selection_indicator.show()
+            # Show delete button when items are selected
+            self.delete_button.show()
         else:
             self.selection_indicator.hide()
+            # Hide delete button when no items are selected
+            self.delete_button.hide()
         
         # Process single selection for backward compatibility
         if selected_count == 1:
@@ -1844,6 +1927,162 @@ class FileListWidget(QWidget):
         
         # Emit the multi-select signal
         self.files_selected.emit(selected_files)
+    
+    def _handle_delete_clicked(self):
+        """Handle delete button click."""
+        selected_items = self.list_widget.selectedItems()
+        if not selected_items:
+            return
+            
+        # Collect the file paths of selected items
+        file_paths = []
+        file_infos = []
+        for item in selected_items:
+            widget = self.list_widget.itemWidget(item)
+            if widget and hasattr(widget, 'file_info'):
+                file_paths.append(widget.file_info['path'])
+                file_infos.append(widget.file_info)
+        
+        if not file_paths:
+            return
+            
+        # Check if files are on a removable drive/SD card - use a fast method
+        is_removable = False
+        if file_paths:
+            # Get the drive letter for the first file
+            drive = os.path.splitdrive(file_paths[0])[0]
+            if drive:
+                # Simple check: Assume any drive that isn't C: is removable
+                # This is much faster than running PowerShell commands
+                is_removable = drive.upper() != "C:"
+            
+        # Show confirmation dialog with appropriate warning
+        count = len(file_paths)
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("Delete Files")
+        
+        if is_removable:
+            msg_box.setText(f"Delete {count} file{'s' if count > 1 else ''}?")
+            msg_box.setInformativeText(
+                "WARNING: Files on removable drives like SD cards may be permanently deleted instead of moved to trash.\n\n"
+                "Do you want to continue?"
+            )
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+        else:
+            msg_box.setText(f"Move {count} file{'s' if count > 1 else ''} to trash?")
+            msg_box.setInformativeText("Files will be moved to the system trash/recycle bin.")
+            msg_box.setIcon(QMessageBox.Icon.Question)
+        
+        # Add file names to details
+        details = "\n".join([os.path.basename(path) for path in file_paths[:10]])
+        if count > 10:
+            details += f"\n... and {count - 10} more files"
+        msg_box.setDetailedText(details)
+        
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.No)
+        
+        # Apply dark theme to the message box
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #2d2d2d;
+                color: white;
+            }
+            QMessageBox QLabel {
+                color: white;
+            }
+            QMessageBox QPushButton {
+                background-color: #3a3a3a;
+                color: white;
+                border: 1px solid #555;
+                padding: 5px 15px;
+                min-width: 80px;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #454545;
+            }
+            QMessageBox QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+            QMessageBox QTextEdit {
+                background-color: #252525;
+                color: white;
+                border: 1px solid #444;
+            }
+        """)
+        
+        result = msg_box.exec()
+        
+        if result == QMessageBox.StandardButton.Yes:
+            # Process files
+            deleted_files = []
+            failed_files = []
+            
+            for file_path in file_paths:
+                try:
+                    # Use send2trash to move file to trash
+                    send2trash(file_path)
+                    
+                    # Check if the file was actually removed
+                    if not os.path.exists(file_path):
+                        deleted_files.append(file_path)
+                    else:
+                        failed_files.append(file_path)
+                except Exception as e:
+                    logger.error(f"Failed to process file {file_path}: {str(e)}")
+                    failed_files.append(file_path)
+            
+            # Update UI
+            if deleted_files:
+                # Remove deleted items from the list
+                for i in range(self.list_widget.count() - 1, -1, -1):
+                    item = self.list_widget.item(i)
+                    widget = self.list_widget.itemWidget(item)
+                    if widget and hasattr(widget, 'file_info') and widget.file_info['path'] in deleted_files:
+                        self.list_widget.takeItem(i)
+                
+                # Emit signal for deleted files
+                deleted_infos = [info for info in file_infos if info['path'] in deleted_files]
+                self.files_deleted.emit(deleted_infos)
+                
+                # Rescan the card to ensure the file list is up-to-date
+                if self.file_model:
+                    self.file_model.scan_directory()
+                    self.update_view()
+                else:
+                    # If no file model, just update the status with file type information
+                    if self.current_file_types:
+                        files = [widget.file_info for i in range(self.list_widget.count()) 
+                                for widget in [self.list_widget.itemWidget(self.list_widget.item(i))]
+                                if widget and hasattr(widget, 'file_info')]
+                        
+                        type_counts = {}
+                        for file in files:
+                            file_type = file['type']
+                            type_counts[file_type] = type_counts.get(file_type, 0) + 1
+                        
+                        status_parts = []
+                        if 'image' in type_counts:
+                            status_parts.append(f"{type_counts['image']} photo{'s' if type_counts['image'] != 1 else ''}")
+                        if 'video' in type_counts:
+                            status_parts.append(f"{type_counts['video']} video{'s' if type_counts['video'] != 1 else ''}")
+                        
+                        self.status_label.setText(f"{self.list_widget.count()} files found ({', '.join(status_parts)})")
+                    else:
+                        self.status_label.setText(f"{self.list_widget.count()} files found")
+                        
+                # Process events to update UI
+                QApplication.processEvents()
+            
+            # Show result message if there were failures
+            if failed_files:
+                error_msg = QMessageBox()
+                error_msg.setWindowTitle("Deletion Error")
+                error_msg.setText(f"Failed to process {len(failed_files)} file{'s' if len(failed_files) > 1 else ''}.")
+                error_msg.setDetailedText("\n".join(failed_files))
+                error_msg.setIcon(QMessageBox.Icon.Warning)
+                error_msg.setStyleSheet(msg_box.styleSheet())  # Reuse the dark theme
+                error_msg.exec()
     
     def _handle_scroll(self):
         """Handle scroll events to prioritize visible thumbnails."""

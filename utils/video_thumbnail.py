@@ -126,11 +126,6 @@ def generate_video_thumbnail(file_path: str, size: QSize, frame_time: float = 1.
         # Add filmstrip overlay
         pixmap_with_overlay = add_filmstrip_overlay(target_pixmap)
         
-        # Add duration indicator if available
-        duration = get_video_duration(file_path)
-        if duration and duration > 0:
-            pixmap_with_overlay = add_duration_indicator(pixmap_with_overlay, duration)
-        
         # Cache the result
         if not hasattr(generate_video_thumbnail, "cache"):
             generate_video_thumbnail.cache = {}
@@ -364,7 +359,7 @@ def add_filmstrip_overlay(pixmap: QPixmap) -> QPixmap:
     painter.drawRect(width - strip_width, 0, strip_width, height)
     
     # Draw sprocket holes (left side)
-    painter.setBrush(QBrush(QColor(40, 40, 40, 255)))
+    painter.setBrush(QBrush(QColor(255, 255, 255, 255)))
     
     # Calculate number of holes based on spacing
     hole_count = height // (hole_height + hole_spacing)

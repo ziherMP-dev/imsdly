@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QFrame, QVBoxLayout, QPushButton, QStyle, QWidget
-from PyQt6.QtCore import QSize
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from ..styles.dark_theme import SIDEBAR_STYLE
 from .sd_card.card_list import SDCardListWidget
 from handlers.sd_card.detector import SDCardDetector
@@ -8,10 +8,49 @@ import logging
 # Set up logging
 logger = logging.getLogger(__name__)
 
+class SideBarButton(QPushButton):
+    """Custom sidebar button that can display an active indicator"""
+    
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self._active = False
+        self.setCheckable(True)  # Make button checkable but don't use built-in checked state visuals
+        
+    @property
+    def active(self):
+        return self._active
+        
+    @active.setter
+    def active(self, value):
+        if self._active != value:
+            self._active = value
+            self.setChecked(value)  # Sync Qt's checked state with our active state
+            self.update()  # Force repaint when active state changes
+
+    def paintEvent(self, event):
+        """Override paint event to draw the active indicator"""
+        super().paintEvent(event)
+        
+        # Draw active indicator if this button is active
+        if self._active:
+            from PyQt6.QtGui import QPainter, QColor
+            painter = QPainter(self)
+            painter.setPen(Qt.PenStyle.NoPen)
+            # Use a bright blue color for the indicator
+            painter.setBrush(QColor("#007bff"))  # Bootstrap blue color
+            # Draw a vertical strip on the left side (5px wide)
+            painter.drawRect(0, 0, 5, self.height())
+            painter.end()
+
 class SideBar(QFrame):
+    # Add signal to notify main window when the active panel changes
+    active_panel_changed = pyqtSignal(str)
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
+        self.active_panel = None  # Track which panel is active
+        self.buttons = {}  # Store references to buttons
         self.setup_ui()
         
     def setup_ui(self):
@@ -28,15 +67,18 @@ class SideBar(QFrame):
         logger.debug(f"SideBar layout spacing: {layout.spacing()}")
         
         # Define buttons
-        buttons = [
+        button_defs = [
             ("SD Card", self.parent.handle_sd_card, "SP_DriveHDIcon"),
             ("Import Settings", self.parent.handle_import_settings, "SP_ArrowRight"),
             ("Browse Files", self.parent.handle_browse_files, "SP_FileDialogContentsView"),
         ]
         
         # Add main buttons
-        for button_text, handler, icon_name in buttons:
-            btn = QPushButton(button_text)
+        for button_text, handler, icon_name in button_defs:
+            # Use custom SideBarButton instead of QPushButton
+            btn = SideBarButton(button_text)
+            self.buttons[button_text] = btn  # Store reference to button
+            
             icon = self.style().standardIcon(getattr(QStyle.StandardPixmap, icon_name))
             btn.setIcon(icon)
             # Make buttons 3x bigger vertically and 2x wider
@@ -47,13 +89,20 @@ class SideBar(QFrame):
                 QPushButton {
                     font-size: 16px;
                     padding: 12px;
+                    padding-left: 16px;  /* Extra padding to account for the indicator */
                     text-align: left;
                     border: none;
                     border-bottom: 1px solid #333;
                     margin: 0;
                 }
             """)
+            
+            # Capture the button name in a local variable
+            button_name = button_text
+            btn.clicked.connect(lambda checked, name=button_name: self.set_active_panel(name))
+            # Connect to original handler too
             btn.clicked.connect(handler)
+            
             layout.addWidget(btn)
             
             # Add SD card list under the SD Card button
@@ -76,7 +125,8 @@ class SideBar(QFrame):
         layout.addStretch()
         
         # Add exit button at the bottom
-        exit_btn = QPushButton("Exit")
+        exit_btn = SideBarButton("Exit")
+        self.buttons["Exit"] = exit_btn
         exit_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton)
         exit_btn.setIcon(exit_icon)
         exit_btn.setIconSize(QSize(48, 48))  # 3x bigger icon
@@ -86,6 +136,7 @@ class SideBar(QFrame):
             QPushButton {
                 font-size: 16px;
                 padding: 12px;
+                padding-left: 16px;  /* Extra padding to account for the indicator */
                 text-align: left;
                 border: none;
                 margin: 0;
@@ -96,6 +147,30 @@ class SideBar(QFrame):
         
         # Log final layout properties
         logger.debug(f"SideBar final size: {self.size()}")
+        
+        # Set SD Card as active by default
+        self.set_active_panel("SD Card")
+        
+    def set_active_panel(self, panel_name):
+        """Set the active panel and update indicators."""
+        if panel_name == self.active_panel:
+            return  # Already active
+            
+        # Deactivate the previous active button
+        if self.active_panel and self.active_panel in self.buttons:
+            self.buttons[self.active_panel].active = False
+            self.buttons[self.active_panel].setChecked(False)  # Ensure the checked state is reset
+            
+        # Activate the new button
+        self.active_panel = panel_name
+        if panel_name in self.buttons:
+            self.buttons[panel_name].active = True
+            self.buttons[panel_name].setChecked(True)  # Ensure the checked state is set
+            
+        # Emit signal to inform main window
+        self.active_panel_changed.emit(panel_name)
+        
+        logger.debug(f"Active panel set to: {panel_name}")
         
     def _handle_cards_updated(self, cards):
         """Handle when the SD card list is updated"""

@@ -44,6 +44,9 @@ class MainWindow(QMainWindow):
         self.sidebar = SideBar(self)
         content_layout.addWidget(self.sidebar, stretch=0)
         
+        # Connect active panel changed signal
+        self.sidebar.active_panel_changed.connect(self._handle_active_panel_changed)
+        
         # Main content area
         self.center_content = QFrame()
         self.center_content.setStyleSheet(CONTENT_AREA_STYLE)
@@ -180,6 +183,10 @@ class MainWindow(QMainWindow):
         # Switch to SD card panel
         self.stacked_widget.setCurrentWidget(self.sd_card_panel)
         
+        # Set SD Card as active panel in the sidebar to highlight the button
+        if hasattr(self.sidebar, 'set_active_panel'):
+            self.sidebar.set_active_panel("SD Card")
+        
         # Store as selected card in the list widget
         if hasattr(self.sidebar, 'sd_card_list'):
             self.sidebar.sd_card_list.selected_card = card_info
@@ -296,4 +303,14 @@ class MainWindow(QMainWindow):
     def handle_browse_files(self):
         """Handle Browse Files button click"""
         self.stacked_widget.setCurrentWidget(self.browse_files_panel)
-        self.statusBar().showMessage("Browse Files view activated", 2000) 
+        self.statusBar().showMessage("Browse Files view activated", 2000)
+
+    def _handle_active_panel_changed(self, panel_name: str) -> None:
+        """
+        Handle active panel changed signal.
+        
+        Args:
+            panel_name: Name of the active panel
+        """
+        # Implement the logic to handle active panel changed signal
+        pass 
