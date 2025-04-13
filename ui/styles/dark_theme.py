@@ -65,8 +65,12 @@ SIDEBAR_STYLE = """
         font-size: 13px;
         font-weight: 400;
         letter-spacing: 0.3px;
+        background-color: #2c313c;
     }
-    QPushButton:hover {
+    QPushButton:hover:!checked {
+        background-color: #3c4454;
+    }
+    QPushButton:checked {
         background-color: #3c4454;
     }
 """

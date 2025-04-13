@@ -4,6 +4,7 @@ from .widgets.title_bar import TitleBar
 from .widgets.side_bar import SideBar
 from .styles.dark_theme import MAIN_WINDOW_STYLE, CONTENT_AREA_STYLE
 from .sd_card_panel import SDCardPanel
+from .import_settings_panel import ImportSettingsPanel
 import logging
 
 # Set up logging
@@ -43,6 +44,9 @@ class MainWindow(QMainWindow):
         # Add sidebar
         self.sidebar = SideBar(self)
         content_layout.addWidget(self.sidebar, stretch=0)
+        
+        # Connect active panel changed signal
+        self.sidebar.active_panel_changed.connect(self._handle_active_panel_changed)
         
         # Main content area
         self.center_content = QFrame()
@@ -105,10 +109,11 @@ class MainWindow(QMainWindow):
         self.stacked_widget.addWidget(self.no_sd_card_panel)
         
         # Placeholder panel for Import Settings
-        self.import_settings_panel = QWidget()
-        import_layout = QVBoxLayout(self.import_settings_panel)
-        import_layout.addWidget(QLabel("Import Settings Panel - To be implemented"))
+        self.import_settings_panel = ImportSettingsPanel()
         self.stacked_widget.addWidget(self.import_settings_panel)
+        
+        # Connect settings changed signal
+        self.import_settings_panel.settings_changed.connect(self._handle_settings_changed)
         
         # Placeholder panel for Browse Files
         self.browse_files_panel = QWidget()
@@ -179,6 +184,10 @@ class MainWindow(QMainWindow):
         
         # Switch to SD card panel
         self.stacked_widget.setCurrentWidget(self.sd_card_panel)
+        
+        # Set SD Card as active panel in the sidebar to highlight the button
+        if hasattr(self.sidebar, 'set_active_panel'):
+            self.sidebar.set_active_panel("SD Card")
         
         # Store as selected card in the list widget
         if hasattr(self.sidebar, 'sd_card_list'):
@@ -261,6 +270,14 @@ class MainWindow(QMainWindow):
         self.stacked_widget.setCurrentWidget(self.import_settings_panel)
         self.statusBar().showMessage("Import Settings view activated", 2000)
 
+    def _handle_settings_changed(self):
+        """Handle when import settings are changed"""
+        destination = self.import_settings_panel.get_destination_folder()
+        if destination:
+            self.statusBar().showMessage(f"Destination folder set to: {destination}", 3000)
+        else:
+            self.statusBar().showMessage("Destination folder cleared", 3000)
+
     def handle_refresh(self):
         """Handle refresh button click on no SD card panel"""
         if hasattr(self.sidebar, 'sd_card_list'):
@@ -296,4 +313,14 @@ class MainWindow(QMainWindow):
     def handle_browse_files(self):
         """Handle Browse Files button click"""
         self.stacked_widget.setCurrentWidget(self.browse_files_panel)
-        self.statusBar().showMessage("Browse Files view activated", 2000) 
+        self.statusBar().showMessage("Browse Files view activated", 2000)
+
+    def _handle_active_panel_changed(self, panel_name: str) -> None:
+        """
+        Handle active panel changed signal.
+        
+        Args:
+            panel_name: Name of the active panel
+        """
+        # Implement the logic to handle active panel changed signal
+        pass 
