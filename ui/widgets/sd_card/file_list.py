@@ -42,7 +42,8 @@ logger = logging.getLogger("FileList")
 
 from PyQt6.QtCore import (
     Qt, QSize, QTimer, QRect, QPoint, QEvent, QThread, QThreadPool, 
-    QRunnable, QObject, pyqtSignal, pyqtSlot, QMutex, QRunnable, QCoreApplication
+    QRunnable, QObject, pyqtSignal, pyqtSlot, QMutex, QRunnable, QCoreApplication,
+    QSettings
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QIcon, QPen, QBrush, QFont, QAction, 
@@ -54,7 +55,8 @@ from PyQt6.QtWidgets import (
     QListWidget, QListView, QListWidgetItem, QMenu, QFrame, QDialog,
     QMessageBox, QAbstractItemView, QFileDialog, QSizePolicy, QToolButton,
     QToolTip, QScrollArea, QGridLayout, QSplitter, QProgressBar, QCheckBox,
-    QComboBox, QInputDialog, QLineEdit, QStyle
+    QComboBox, QInputDialog, QLineEdit, QStyle, QFileIconProvider,
+    QMainWindow
 )
 
 # Add import for move_to_trash function
@@ -1757,18 +1759,69 @@ class FileListWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setup_ui()
         self.file_model = None
         self.current_file_types = None
-        self.view_mode = self.LIST_VIEW  # Default to list view
-        self.is_loading = False  # Flag to track if thumbnail loading is in progress
-        self.pending_thumbnails = 0  # Counter for pending thumbnail generations
-        self.loaded_thumbnails = 0   # Counter for loaded thumbnails
-        self.visible_items = []      # List to track currently visible items
-        self.scroll_timer = QTimer()  # Timer to delay thumbnail loading during scrolling
+        
+        # Create the thumbnail manager if it doesn't exist
+        global THUMBNAIL_MANAGER
+        if THUMBNAIL_MANAGER is None:
+            THUMBNAIL_MANAGER = ThumbnailManager()
+        
+        # Set initial view mode (will be updated from settings after UI setup)
+        self.view_mode = self.LIST_VIEW
+        
+        # Tracking variables for selection
+        self.is_loading = False
+        self.pending_thumbnails = 0
+        self.loaded_thumbnails = 0
+        
+        # Setup UI components
+        self.setup_ui()
+        
+        # Set up QSettings for preference persistence
+        self.settings = QSettings("Imsdly", "SDCardImporter")
+        
+        # Load and apply user preferences
+        self.load_user_preferences()
+        
+        # Set up a timer for delayed scroll handling
+        self.scroll_timer = QTimer(self)
         self.scroll_timer.setSingleShot(True)
         self.scroll_timer.timeout.connect(self._load_visible_thumbnails)
         
+    def load_user_preferences(self):
+        """Load and apply user preferences from settings."""
+        # Load view mode preference (default to LIST_VIEW if not set)
+        view_mode = self.settings.value("sd_card/view_mode", self.LIST_VIEW, type=int)
+        
+        # Set the view mode without triggering a save (to avoid circular reference)
+        if view_mode in [self.LIST_VIEW, self.ICONS_VIEW, self.THUMBNAIL_VIEW]:
+            self.view_mode = view_mode
+            # Apply view mode settings - this will call set_view_mode which saves the preference
+            self.set_view_mode(view_mode)
+            
+        # Load sort preferences
+        self.sort_key = self.settings.value("sd_card/sort_key", "name", type=str)
+        self.sort_order = self.settings.value("sd_card/sort_order", "asc", type=str)
+        
+        # In the future, add more preferences here:
+        # - Filter settings
+        # - Display preferences
+    
+    def save_user_preferences(self):
+        """Save current user preferences to settings."""
+        # View mode is already saved in set_view_mode method
+        # This method is for explicitly saving all preferences
+        self.settings.setValue("sd_card/view_mode", self.view_mode)
+        
+        # Save sort preferences
+        if hasattr(self, 'sort_key'):
+            self.settings.setValue("sd_card/sort_key", self.sort_key)
+        if hasattr(self, 'sort_order'):
+            self.settings.setValue("sd_card/sort_order", self.sort_order)
+        
+        # In the future, add more preferences here
+    
     def setup_ui(self):
         """Set up the UI components."""
         layout = QVBoxLayout(self)
@@ -2251,11 +2304,14 @@ class FileListWidget(QWidget):
         old_mode = self.view_mode
         self.view_mode = mode
         
+        # Save the view mode preference
+        self.settings.setValue("sd_card/view_mode", mode)
+        
         # If switching to thumbnail view, show a brief loading message
         if mode == self.THUMBNAIL_VIEW and old_mode != self.THUMBNAIL_VIEW:
             self.loading_label.setText("Switching to thumbnail view...")
             self.loading_label.show()
-            
+        
         # Force immediate processing of events to update UI
         QApplication.processEvents()
         
@@ -2364,6 +2420,11 @@ class FileListWidget(QWidget):
         """
         self.file_model = model
         self.current_file_types = file_types
+        
+        # Apply sort preferences from settings
+        if hasattr(self, 'sort_key') and hasattr(self, 'sort_order') and self.file_model:
+            self.file_model.sort_files(self.sort_key, self.sort_order)
+            
         self.update_view()
         
     def update_view(self):
@@ -2459,6 +2520,26 @@ class FileListWidget(QWidget):
         widget = self.list_widget.itemWidget(item)
         if widget and hasattr(widget, 'file_info'):
             self.file_selected.emit(widget.file_info) 
+
+    def handle_sort_changed(self, key, order):
+        """Handle when sorting is changed.
+        
+        Args:
+            key: Sort key ('name', 'size', 'type', 'date')
+            order: Sort order ('asc' or 'desc')
+        """
+        # Store the sort preferences
+        self.sort_key = key
+        self.sort_order = order
+        
+        # Save to settings
+        self.settings.setValue("sd_card/sort_key", key)
+        self.settings.setValue("sd_card/sort_order", order)
+        
+        # Apply sorting if we have a file model
+        if self.file_model:
+            self.file_model.sort_files(key, order)
+            self.update_view()
 
 # Add a helper function at the bottom of the file
 def test_video_thumbnail(file_path):

@@ -62,9 +62,10 @@
 8.4. Test saving and loading settings
 
 ### Step 9: File Organization Options
-9.1. Create UI controls for selecting organization method:
+9.1.1 Create UI controls for selecting organization method:
    - By date (create options for format: YYYY-MM-DD, etc.)
    - By custom metadata structure
+9.1.2 ask for extract and save exif info
 9.2. Add interface for defining custom folder structures
 9.3. Implement preview of resulting folder structure
 9.4. Test different organization methods

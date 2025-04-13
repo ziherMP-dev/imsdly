@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtCore import QSettings
 
 from models.file_system import FileSystemModel
 from ui.widgets.sd_card.file_list import FileListWidget
@@ -19,9 +20,18 @@ class SDCardPanel(QWidget):
         self.selected_card = None
         self.file_model: Optional[FileSystemModel] = None
         self.card_info: Optional[Dict] = None
-        # Track sorting preferences
-        self.current_sort_key = "name"
-        self.current_sort_order = "asc"
+        
+        # Load saved settings
+        settings = QSettings("Imsdly", "SDCardImporter")
+        
+        # Track sorting preferences (load from settings)
+        self.current_sort_key = settings.value("sd_card/sort_key", "name", type=str)
+        self.current_sort_order = settings.value("sd_card/sort_order", "asc", type=str)
+        
+        # Filter preferences (will be applied after UI setup)
+        self.show_photos = settings.value("sd_card/show_photos", True, type=bool)
+        self.show_videos = settings.value("sd_card/show_videos", True, type=bool)
+        
         self._setup_ui()
         self._connect_signals()
         
@@ -409,6 +419,22 @@ class SDCardPanel(QWidget):
         # Connect selection signals
         self.file_list.files_selected.connect(self._handle_files_selected)
         
+        # Sync view mode buttons with file list's actual mode from saved preferences
+        self._sync_view_mode_buttons()
+        
+        # Apply saved filter settings
+        self._apply_saved_filter_settings()
+        
+    def _sync_view_mode_buttons(self):
+        """Sync view mode buttons with the file list's actual view mode."""
+        if hasattr(self.file_list, 'view_mode'):
+            current_mode = self.file_list.view_mode
+            self.list_view_button.setChecked(current_mode == self.file_list.LIST_VIEW)
+            self.icons_view_button.setChecked(current_mode == self.file_list.ICONS_VIEW)
+            self.thumbnail_view_button.setChecked(current_mode == self.file_list.THUMBNAIL_VIEW)
+            # Update the panel's tracking variable
+            self.current_view_mode = current_mode
+        
     def _handle_view_mode_changed(self, mode: int) -> None:
         """Handle view mode change.
         
@@ -507,6 +533,11 @@ class SDCardPanel(QWidget):
         else:
             self.filter_status_label.setText("")
         
+        # Save filter preferences
+        settings = QSettings("Imsdly", "SDCardImporter")
+        settings.setValue("sd_card/show_photos", self.photos_button.isChecked())
+        settings.setValue("sd_card/show_videos", self.videos_button.isChecked())
+        
         if self.file_model and self.selected_card:
             # Get current filter settings
             file_types = []
@@ -538,17 +569,22 @@ class SDCardPanel(QWidget):
         # Update current sort settings
         self.current_sort_key = sort_map[sort_text]
         
-        # Apply sorting
-        self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
-        
-        # Update file list with current filters
-        file_types = []
-        if self.photos_button.isChecked():
-            file_types.append('image')
-        if self.videos_button.isChecked():
-            file_types.append('video')
+        # Apply sorting and save preferences
+        if hasattr(self.file_list, 'handle_sort_changed'):
+            # Use the file list's method which saves preferences
+            self.file_list.handle_sort_changed(self.current_sort_key, self.current_sort_order)
+        else:
+            # Fallback to direct model sorting
+            self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
             
-        self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
+            # Update file list with current filters
+            file_types = []
+            if self.photos_button.isChecked():
+                file_types.append('image')
+            if self.videos_button.isChecked():
+                file_types.append('video')
+                
+            self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
             
     def _handle_sort_order_changed(self) -> None:
         """Toggle sort direction between ascending and descending."""
@@ -566,17 +602,22 @@ class SDCardPanel(QWidget):
             self.sort_order_button.setToolTip("Sort ascending")
             self.current_sort_order = "asc"
             
-        # Apply sorting
-        self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
-        
-        # Update file list with current filters
-        file_types = []
-        if self.photos_button.isChecked():
-            file_types.append('image')
-        if self.videos_button.isChecked():
-            file_types.append('video')
+        # Apply sorting and save preferences
+        if hasattr(self.file_list, 'handle_sort_changed'):
+            # Use the file list's method which saves preferences
+            self.file_list.handle_sort_changed(self.current_sort_key, self.current_sort_order)
+        else:
+            # Fallback to direct model sorting
+            self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
             
-        self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
+            # Update file list with current filters
+            file_types = []
+            if self.photos_button.isChecked():
+                file_types.append('image')
+            if self.videos_button.isChecked():
+                file_types.append('video')
+                
+            self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
         
     def _handle_card_selected(self, card_info: Dict[str, Any]) -> None:
         """Handle SD card selection.
@@ -740,4 +781,14 @@ class SDCardPanel(QWidget):
             count = len(files)
             print(f"Selected {count} file{'s' if count > 1 else ''}")
         else:
-            print("No files selected") 
+            print("No files selected")
+
+    def _apply_saved_filter_settings(self):
+        """Apply the saved filter settings to the UI."""
+        # Update photos filter
+        if self.photos_button.isChecked() != self.show_photos:
+            self._toggle_photos()  # This will toggle the current state
+            
+        # Update videos filter
+        if self.videos_button.isChecked() != self.show_videos:
+            self._toggle_videos()  # This will toggle the current state 
