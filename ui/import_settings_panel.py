@@ -29,9 +29,42 @@ class ImportSettingsPanel(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.settings_file_path = self._get_settings_file_path()
         self.setup_ui()
+        
+        # Don't connect signals until UI is fully initialized
+        self._connect_signals()
+        
+        # Load settings after UI is fully set up
         self.load_settings()
         self.update_ui_states()
+    
+    def _get_settings_file_path(self):
+        """Get the path to the settings file."""
+        import os
+        # Get app data directory
+        if os.name == 'nt':  # Windows
+            app_data = os.getenv('APPDATA')
+            if not app_data:
+                app_data = os.path.expanduser('~')
+        else:  # macOS/Linux
+            app_data = os.path.expanduser('~/.config')
+            
+        # Create Imsdly directory if it doesn't exist
+        imsdly_dir = os.path.join(app_data, 'Imsdly')
+        os.makedirs(imsdly_dir, exist_ok=True)
+        
+        # Return settings file path
+        return os.path.join(imsdly_dir, 'import_settings.ini')
+        
+    def _connect_signals(self):
+        """Connect UI signals after UI is fully initialized."""
+        # Connect signals for live updates
+        self.org_by_date.toggled.connect(self._handle_org_method_changed)
+        self.org_by_custom.toggled.connect(self._handle_org_method_changed)
+        self.date_format_combo.currentIndexChanged.connect(self.handle_settings_changed)
+        self.custom_format_input.textChanged.connect(self._handle_custom_format_changed)
+        self.extract_exif.toggled.connect(self.handle_settings_changed)
     
     def setup_ui(self):
         """Set up the UI components."""
@@ -174,23 +207,11 @@ class ImportSettingsPanel(QWidget):
         """)
         preview_layout.addWidget(self.preview_tree)
         
-        # Preview button
-        preview_button = QPushButton("Update Preview")
-        preview_button.clicked.connect(self.update_preview)
-        preview_layout.addWidget(preview_button)
-        
         scroll_layout.addWidget(preview_group)
         
         # Finalize scroll area
         scroll_area.setWidget(scroll_content)
         main_layout.addWidget(scroll_area)
-        
-        # Connect signals for live updates
-        self.org_by_date.toggled.connect(self.update_ui_states)
-        self.org_by_custom.toggled.connect(self.update_ui_states)
-        self.date_format_combo.currentIndexChanged.connect(self.handle_settings_changed)
-        self.custom_format_input.textChanged.connect(self.handle_settings_changed)
-        self.extract_exif.toggled.connect(self.handle_settings_changed)
         
         # Apply dark theme
         self.apply_styles()
@@ -412,7 +433,13 @@ class ImportSettingsPanel(QWidget):
     
     def handle_settings_changed(self):
         """Handle when any setting is changed."""
+        # Save settings
         self.save_settings()
+        
+        # Update the preview to reflect changes
+        self.update_preview()
+        
+        # Emit settings changed signal
         self.settings_changed.emit()
     
     def get_destination_folder(self):
@@ -444,49 +471,93 @@ class ImportSettingsPanel(QWidget):
         return self.extract_exif.isChecked()
     
     def load_settings(self):
-        """Load settings from QSettings."""
-        settings = QSettings("Imsdly", "SDCardImporter")
+        """Load settings from file."""
+        import configparser
+        import os
         
-        # Load destination folder
-        destination = settings.value("import/destination_folder", "")
-        if destination:
-            self.destination_path.setText(destination)
+        # Create default settings
+        settings = {
+            'destination_folder': '',
+            'organization_method': self.ORG_BY_DATE,
+            'date_format': 'yyyy-mm-dd',
+            'custom_format': '{YYYY}/{MM}/{DD}/{type}',
+            'extract_exif': 'True'
+        }
         
-        # Load organization method
-        org_method = settings.value("import/organization_method", self.ORG_BY_DATE)
+        # Load existing settings if file exists
+        if os.path.exists(self.settings_file_path):
+            config = configparser.ConfigParser()
+            config.read(self.settings_file_path)
+            
+            if 'Import' in config:
+                for key in settings:
+                    if key in config['Import']:
+                        settings[key] = config['Import'][key]
+        
+        # Apply settings to UI - do this with signals disabled
+        self.blockSignals(True)
+        
+        # Destination folder
+        if settings['destination_folder']:
+            self.destination_path.setText(settings['destination_folder'])
+        
+        # Organization method
+        org_method = settings['organization_method']
         self.org_by_date.setChecked(org_method == self.ORG_BY_DATE)
         self.org_by_custom.setChecked(org_method == self.ORG_BY_CUSTOM)
         
-        # Load date format
-        date_format = settings.value("import/date_format", "yyyy-mm-dd")
+        # Date format
+        date_format = settings['date_format']
         for i in range(self.date_format_combo.count()):
             if self.date_format_combo.itemData(i) == date_format:
                 self.date_format_combo.setCurrentIndex(i)
                 break
         
-        # Load custom format
-        custom_format = settings.value("import/custom_format", "{YYYY}/{MM}/{DD}/{type}")
+        # Custom format
+        custom_format = settings['custom_format']
         self.custom_format_input.setText(custom_format)
         
-        # Load EXIF options
-        extract_exif = settings.value("import/extract_exif", True, type=bool)
+        # EXIF options
+        extract_exif = settings['extract_exif'].lower() == 'true'
         self.extract_exif.setChecked(extract_exif)
+        
+        self.blockSignals(False)
     
     def save_settings(self):
-        """Save settings to QSettings."""
-        settings = QSettings("Imsdly", "SDCardImporter")
+        """Save settings to file."""
+        import configparser
         
-        # Save destination folder
-        settings.setValue("import/destination_folder", self.destination_path.text())
+        # Create config parser
+        config = configparser.ConfigParser()
+        config['Import'] = {
+            'destination_folder': self.destination_path.text(),
+            'organization_method': self.get_organization_method(),
+            'date_format': self.date_format_combo.currentData(),
+            'custom_format': self.custom_format_input.text(),
+            'extract_exif': str(self.extract_exif.isChecked())
+        }
         
-        # Save organization method
-        settings.setValue("import/organization_method", self.get_organization_method())
+        # Write to file
+        with open(self.settings_file_path, 'w') as f:
+            config.write(f)
+            
+    def _handle_org_method_changed(self):
+        """Handle when organization method radio buttons are toggled."""
+        # First update UI states
+        self.update_ui_states()
         
-        # Save date format
-        settings.setValue("import/date_format", self.date_format_combo.currentData())
+        # Then save settings
+        self.save_settings()
+        self.settings_changed.emit()
+    
+    def _handle_custom_format_changed(self, text):
+        """Handle when custom format input changes."""
+        # Force save settings immediately
+        self.save_settings()
         
-        # Save custom format
-        settings.setValue("import/custom_format", self.custom_format_input.text())
-        
-        # Save EXIF options
-        settings.setValue("import/extract_exif", self.extract_exif.isChecked()) 
+        # Update preview if custom format is currently selected
+        if self.org_by_custom.isChecked():
+            self.update_preview()
+            
+        # Emit settings changed signal
+        self.settings_changed.emit() 
