@@ -2,6 +2,7 @@ import sys
 import logging
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
+from ui.resources import initialize_resources
 
 # Configure logging
 logging.basicConfig(
@@ -19,6 +20,13 @@ def main():
     logger.info("Starting Imsdly application")
     
     app = QApplication(sys.argv)
+    
+    # Initialize resources
+    if initialize_resources():
+        logger.info("Resources initialized successfully")
+    else:
+        logger.warning("Failed to initialize resources")
+    
     window = MainWindow()
     window.show()
     

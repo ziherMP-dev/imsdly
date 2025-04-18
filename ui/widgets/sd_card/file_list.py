@@ -36,6 +36,7 @@ from queue import Queue, Empty
 from threading import Thread
 import sys
 import platform
+import concurrent.futures
 
 # Configure logging
 logger = logging.getLogger("FileList")
@@ -43,12 +44,12 @@ logger = logging.getLogger("FileList")
 from PyQt6.QtCore import (
     Qt, QSize, QTimer, QRect, QPoint, QEvent, QThread, QThreadPool, 
     QRunnable, QObject, pyqtSignal, pyqtSlot, QMutex, QRunnable, QCoreApplication,
-    QSettings
+    QSettings, QRectF, QMetaObject, Q_ARG
 )
 from PyQt6.QtGui import (
     QPixmap, QImage, QPainter, QColor, QIcon, QPen, QBrush, QFont, QAction, 
     QKeySequence, QDrag, QCursor, QShortcut, QPainterPath, QStandardItem,
-    QStandardItemModel, QPainter, QPolygon, QLinearGradient
+    QStandardItemModel, QPainter, QPolygon, QLinearGradient, QFontMetrics
 )
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
@@ -58,6 +59,7 @@ from PyQt6.QtWidgets import (
     QComboBox, QInputDialog, QLineEdit, QStyle, QFileIconProvider,
     QMainWindow
 )
+from PyQt6.QtSvg import QSvgRenderer
 
 # Add import for move_to_trash function
 from send2trash import send2trash
@@ -296,6 +298,9 @@ class ThumbnailCache:
                 return self._generate_raw_thumbnail(file_path, size)
             elif file_type == 'video':
                 return self._generate_video_thumbnail(file_path, size)
+            elif file_type == 'audio':
+                # Don't create thumbnails for audio files, use a generic icon instead
+                return self._generate_generic_thumbnail(file_path, size, is_audio=True)
             elif file_type == 'document':
                 return self._generate_document_thumbnail(file_path, size)
             else:
@@ -408,72 +413,178 @@ class ThumbnailCache:
         logging.info(f"Using fallback thumbnail for {file_path}")
         return self._generate_generic_thumbnail(file_path, size, is_video=True)
 
-    def _generate_document_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
-        """Generate a thumbnail for a document file"""
-        # Return a generic document icon
-        return self._generate_generic_thumbnail(file_path, size, is_document=True)
-
-    def _generate_generic_thumbnail(self, file_path: str, size: QSize, 
-                                   is_video: bool = False, 
-                                   is_document: bool = False) -> QPixmap:
-        """Generate a generic thumbnail with icon for file"""
+    def _generate_audio_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
+        """Generate a thumbnail for an audio file."""
+        # Create a custom audio thumbnail with smaller icon
         pixmap = QPixmap(size)
         pixmap.fill(Qt.GlobalColor.transparent)
         
         painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # File extension for overlay
         ext = os.path.splitext(file_path)[1].lower()
         if ext.startswith('.'):
             ext = ext[1:]
         
-        # Background with rounded corners
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Background with rounded corners and gradient
         painter.setBrush(QBrush(QColor("#303030")))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(0, 0, size.width(), size.height(), 4, 4)
         
-        # Icon type based on file type
-        icon_color = QColor("#4a9eff")  # Blue for most files
-        icon_name = "📄"  # Default file icon
+        # Add subtle gradient
+        gradient = QLinearGradient(0, 0, size.width(), size.height())
+        gradient.setColorAt(0, QColor(35, 30, 40))
+        gradient.setColorAt(1, QColor(39, 34, 44))
+        painter.fillRect(2, 2, size.width()-4, size.height()-4, gradient)
         
-        if is_video:
-            icon_color = QColor("#ff4a4a")  # Red for video
-            icon_name = "🎬"
-        elif is_document:
-            icon_color = QColor("#4aff7f")  # Green for documents
-            icon_name = "📝"
-        elif ext in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'tiff', 'webp', 'svg']:
-            icon_color = QColor("#ff9e4a")  # Orange for images
-            icon_name = "🖼️"
-        elif ext in ['raw', 'cr2', 'nef', 'arf', 'sr2', 'crw', 'dng', 'orf', 'pef', 'arw']:
-            icon_color = QColor("#ff9e4a")  # Orange for RAW images
-            icon_name = "📸"
+        # Draw audio icon (smaller size)
+        icon_color = QColor("#9c4aff")  # Purple for audio
         
-        # Draw icon
-        font = QFont()
-        font.setPointSize(size.height() // 2)
-        painter.setFont(font)
-        painter.setPen(icon_color)
-        painter.drawText(QRect(0, 0, size.width(), size.height()), Qt.AlignmentFlag.AlignCenter, icon_name)
+        # Audio wave visualization (simple version)
+        pen = QPen(icon_color, 3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
         
-        # Draw overlay with file extension for non-standard files
-        if ext and not is_video and not is_document and ext not in ['jpg', 'jpeg', 'png', 'gif', 'bmp']:
-            # Bottom overlay rectangle
-            painter.setBrush(QBrush(QColor(0, 0, 0, 180)))
-            painter.setPen(Qt.PenStyle.NoPen)
-            rect = QRect(0, size.height() - size.height() // 4, size.width(), size.height() // 4)
-            painter.drawRect(rect)
+        # Calculate a smaller area for the wave visualization - 60% of size
+        wave_width = int(size.width() * 0.6)
+        wave_height = int(size.height() * 0.5)
+        
+        # Center the wave
+        x_offset = (size.width() - wave_width) // 2
+        y_offset = (size.height() - wave_height) // 2
+        
+        # Draw simplified audio waves
+        wave_rect = QRect(x_offset, y_offset, wave_width, wave_height)
+        center_y = wave_rect.center().y()
+        
+        # Create wave points
+        num_points = 6
+        point_spacing = wave_width / (num_points - 1)
+        
+        for i in range(num_points):
+            x = wave_rect.left() + i * point_spacing
             
-            # File extension text
-            painter.setPen(QPen(QColor(255, 255, 255)))
-            font = QFont()
-            font.setPointSize(size.height() // 6)
-            painter.setFont(font)
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, ext.upper())
+            # Calculate wave height - middle points taller than edges
+            height_factor = 1.0
+            if i > 0 and i < num_points - 1:
+                # Distance from center (0 to 1 range)
+                dist_from_center = abs(i - (num_points - 1) / 2) / ((num_points - 1) / 2)
+                height_factor = 1.0 - 0.7 * dist_from_center  # Taller in middle
+            
+            wave_height_i = wave_height * height_factor
+            
+            # Draw vertical line
+            line_top = center_y - wave_height_i / 2
+            line_bottom = center_y + wave_height_i / 2
+            painter.drawLine(QPoint(int(x), int(line_top)), QPoint(int(x), int(line_bottom)))
+        
+        # Draw note icon
+        note_size = int(size.width() * 0.25)  # 25% of width
+        note_rect = QRect(
+            size.width() - note_size - 10,  # Right side with padding
+            y_offset,                       # Aligned with wave top
+            note_size,
+            note_size
+        )
+        
+        # Draw music note emoji or symbol
+        painter.setPen(icon_color)
+        font = QFont()
+        font.setPointSize(note_size * 0.8)
+        painter.setFont(font)
+        painter.drawText(note_rect, Qt.AlignmentFlag.AlignCenter, "🎵")
+        
+        # Add format badge in top-right
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(156, 74, 255, 220)))  # Purple with transparency
+        badge_width = min(36, size.width() // 3)  # Ensure badge isn't too large
+        badge_height = 18
+        badge_x = size.width() - badge_width - 5
+        badge_y = 5
+        painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
+        
+        painter.setPen(QColor(255, 255, 255))
+        font = QFont()
+        font.setPointSize(size.height() // 10)
+        font.setBold(True)
+        painter.setFont(font)
+        badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
+        
+        # Show extension in badge
+        ext_text = ext.upper() if ext else "WAV"
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
         
         painter.end()
         return pixmap
+
+    def _generate_document_thumbnail(self, file_path: str, size: QSize) -> QPixmap:
+        """Generate a thumbnail for a document file"""
+        # Return a generic document icon
+        return self._generate_generic_thumbnail(file_path, size, is_document=True)
+
+    def _generate_generic_thumbnail(self, file_path: str, size: QSize, 
+                                    is_video: bool = False, 
+                                    is_audio: bool = False,
+                                    is_document: bool = False) -> QPixmap:
+        """Generate a generic thumbnail with icon for file"""
+        final_pixmap = QPixmap(self.thumb_width, self.thumb_height)
+        final_pixmap.fill(QColor(25, 25, 25))
+        
+        painter = QPainter(final_pixmap)
+        
+        # Get file extension and type
+        ext = os.path.splitext(self.file_path)[1].lower()
+        file_type = self.file_info.get('type', '')
+        
+        # Check if this is an audio file
+        is_audio = file_type == 'audio' or ext in ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a']
+        
+        # Draw icon based on file type
+        icon_color = QColor(149, 165, 166)  # Default grey
+        icon_text = "📄"  # Default file icon
+        
+        if is_audio:
+            # Audio file
+            icon_color = QColor("#9c4aff")  # Purple for audio
+            icon_text = "🎵"
+        elif file_type == 'video' or ext in ['.mp4', '.avi', '.mov', '.mkv']:
+            # Video file
+            icon_color = QColor("#ff4a4a")  # Red for video
+            icon_text = "🎬"
+        elif file_type == 'image' or ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+            # Image file
+            icon_color = QColor("#ff9e4a")  # Orange for images
+            icon_text = "🖼️"
+        
+        # Draw file icon
+        painter.setPen(icon_color)
+        font = QFont()
+        font.setPointSize(self.thumb_height // 3)
+        painter.setFont(font)
+        painter.drawText(final_pixmap.rect(), Qt.AlignmentFlag.AlignCenter, icon_text)
+        
+        # Add file extension badge in top-right corner
+        if ext:
+            badge_color = QColor(156, 74, 255, 220) if is_audio else QColor(70, 70, 70, 220)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(badge_color))
+            badge_width = 36
+            badge_height = 18
+            badge_x = self.thumb_width - badge_width - 5
+            badge_y = 5
+            painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
+            
+            painter.setPen(QColor(255, 255, 255))
+            font = QFont("Arial", 8)
+            font.setBold(True)
+            painter.setFont(font)
+            badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+        
+        painter.end()
+        return final_pixmap
 
 # Initialize the thumbnail cache
 THUMBNAIL_MANAGER = ThumbnailCache()
@@ -572,6 +683,11 @@ class ThumbnailWorker(QRunnable):
                 pixmap = QPixmap(self.file_path)
                 if not pixmap.isNull():
                     return self._scale_and_center_pixmap(pixmap)
+
+            # Audio thumbnails
+            if file_type == 'audio':
+                # Don't create custom thumbnails for audio files, use generic icon instead
+                return self._create_generic_thumbnail()  # Audio icon will be applied automatically
             
             # Video thumbnails - use the video_thumbnail module
             if file_type == 'video':
@@ -796,30 +912,157 @@ class ThumbnailWorker(QRunnable):
         
         painter = QPainter(final_pixmap)
         
-        # Draw icon for generic file
-        icon = QIcon.fromTheme("text-x-generic")
-        if icon.isNull():
-            # Draw simple file icon
-            painter.setPen(QColor(149, 165, 166))
-            painter.setBrush(QColor(149, 165, 166, 100))
-            painter.drawRect(self.thumb_width // 2 - 15, self.thumb_height // 2 - 20, 30, 40)
-        else:
-            pixmap = icon.pixmap(48, 48)
-            painter.drawPixmap(
-                (self.thumb_width - pixmap.width()) // 2,
-                (self.thumb_height - pixmap.height()) // 2,
-                pixmap
-            )
+        # Get file extension and type
+        ext = os.path.splitext(self.file_path)[1].lower()
+        file_type = self.file_info.get('type', '')
         
-        # Add file extension text
-        ext = os.path.splitext(self.file_path)[1].upper()
+        # Check if this is an audio file
+        is_audio = file_type == 'audio' or ext in ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a']
+        
+        # Draw icon based on file type
+        icon_color = QColor(149, 165, 166)  # Default grey
+        icon_text = "📄"  # Default file icon
+        
+        if is_audio:
+            # Audio file
+            icon_color = QColor("#9c4aff")  # Purple for audio
+            icon_text = "🎵"
+        elif file_type == 'video' or ext in ['.mp4', '.avi', '.mov', '.mkv']:
+            # Video file
+            icon_color = QColor("#ff4a4a")  # Red for video
+            icon_text = "🎬"
+        elif file_type == 'image' or ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp']:
+            # Image file
+            icon_color = QColor("#ff9e4a")  # Orange for images
+            icon_text = "🖼️"
+        
+        # Draw file icon
+        painter.setPen(icon_color)
+        font = QFont()
+        font.setPointSize(self.thumb_height // 3)
+        painter.setFont(font)
+        painter.drawText(final_pixmap.rect(), Qt.AlignmentFlag.AlignCenter, icon_text)
+        
+        # Add file extension badge in top-right corner
         if ext:
+            badge_color = QColor(156, 74, 255, 220) if is_audio else QColor(70, 70, 70, 220)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(badge_color))
+            badge_width = 36
+            badge_height = 18
+            badge_x = self.thumb_width - badge_width - 5
+            badge_y = 5
+            painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
+            
             painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-            painter.drawText(final_pixmap.rect(), Qt.AlignmentFlag.AlignCenter, ext[1:])
+            font = QFont("Arial", 8)
+            font.setBold(True)
+            painter.setFont(font)
+            badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
         
         painter.end()
         return final_pixmap
+
+    def _create_audio_thumbnail(self) -> QPixmap:
+        """Create a custom thumbnail for audio files"""
+        # Create thumbnail with dimensions from the class
+        pixmap = QPixmap(self.thumb_width, self.thumb_height)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Get file extension
+        ext = os.path.splitext(self.file_path)[1].lower()
+        if ext.startswith('.'):
+            ext = ext[1:]
+        
+        # Draw a nice background with gradient
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(40, 40, 40)))
+        painter.drawRoundedRect(0, 0, self.thumb_width, self.thumb_height, 6, 6)
+        
+        # Add gradient overlay
+        gradient = QLinearGradient(0, 0, self.thumb_width, self.thumb_height)
+        gradient.setColorAt(0, QColor(35, 30, 40))
+        gradient.setColorAt(1, QColor(39, 34, 44))
+        painter.fillRect(2, 2, self.thumb_width-4, self.thumb_height-4, gradient)
+        
+        # Audio wave visualization
+        wave_color = QColor("#9c4aff")  # Purple
+        pen = QPen(wave_color, 3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        
+        # Calculate a smaller area for the waveform (60% of width, 50% of height)
+        wave_width = int(self.thumb_width * 0.6)
+        wave_height = int(self.thumb_height * 0.4)  # Smaller height to leave room for text
+        
+        # Center the waveform
+        x_offset = (self.thumb_width - wave_width) // 2
+        y_offset = (self.thumb_height - wave_height) // 2 - 10  # Move up slightly
+        
+        # Draw a stylized audio wave
+        wave_rect = QRect(x_offset, y_offset, wave_width, wave_height)
+        center_y = wave_rect.center().y()
+        
+        # Number of lines in the wave visualization
+        num_lines = 7
+        spacing = wave_width / (num_lines - 1)
+        
+        # Draw the wave visualization with varying heights
+        for i in range(num_lines):
+            x = wave_rect.left() + i * spacing
+            
+            # Calculate height factor based on position (taller in middle)
+            pos = i / (num_lines - 1)  # 0 to 1
+            height_factor = 0.3 + 0.7 * (1 - abs(pos - 0.5) * 2)  # Creates a peak in middle
+            
+            line_height = wave_height * height_factor
+            y1 = center_y - line_height / 2
+            y2 = center_y + line_height / 2
+            
+            painter.drawLine(int(x), int(y1), int(x), int(y2))
+        
+        # Add music note icon
+        note_size = int(self.thumb_width * 0.2)  # 20% of width
+        note_rect = QRect(
+            self.thumb_width - note_size - 15,
+            y_offset,
+            note_size,
+            note_size
+        )
+        
+        # Draw music note
+        painter.setPen(wave_color)
+        font = QFont()
+        font.setPointSize(note_size * 0.7)
+        painter.setFont(font)
+        painter.drawText(note_rect, Qt.AlignmentFlag.AlignCenter, "🎵")
+        
+        # Add format badge in top-right
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(156, 74, 255, 220)))
+        badge_width = 36
+        badge_height = 18
+        badge_x = self.thumb_width - badge_width - 5
+        badge_y = 5
+        painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
+        
+        # Format text
+        painter.setPen(QColor(255, 255, 255))
+        font = QFont("Arial", 8)
+        font.setBold(True)
+        painter.setFont(font)
+        badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
+        ext_text = ext.upper() if ext else "WAV"
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+        
+        # Finish painting
+        painter.end()
+        return pixmap
 
 
 class FileIconItem(QWidget):
@@ -913,205 +1156,117 @@ class FileIconItem(QWidget):
     
     def _set_default_icon(self):
         """Set a default icon based on file type."""
-        # Create a background for the icon
-        pixmap = QPixmap(self.THUMB_WIDTH, self.THUMB_HEIGHT)
-        pixmap.fill(QColor(34, 34, 34))  # Slightly darker than the background
+        file_type = self.file_info.get('type', '')
+        ext = os.path.splitext(self.file_info['name'])[1].lower()
         
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # Define file type flags
+        is_video = file_type == 'video'
+        is_audio = file_type == 'audio'
+        is_document = file_type == 'document'
         
-        file_type = self.file_info['type']
-        filename = self.file_info['name']
-        ext = os.path.splitext(filename)[1].lower()
+        # Create a pixmap for the icon
+        icon_pixmap = QPixmap(self.THUMB_WIDTH, self.THUMB_HEIGHT)
+        icon_pixmap.fill(Qt.GlobalColor.transparent)
         
-        # Draw a rounded rectangle background
-        painter.setPen(QPen(QColor(50, 50, 50), 1))
-        painter.setBrush(QBrush(QColor(40, 40, 40)))
-        painter.drawRoundedRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, 6, 6)
+        # Define a scaled size for the SVG icon
+        scaled_size = QSize(self.THUMB_WIDTH, self.THUMB_HEIGHT)
         
+        # Set icon based on file type
         if file_type == 'image':
-            # For image files
-            gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
-            gradient.setColorAt(0, QColor(30, 30, 40))
-            gradient.setColorAt(1, QColor(34, 34, 44))
-            painter.fillRect(2, 2, self.THUMB_WIDTH-4, self.THUMB_HEIGHT-4, gradient)
-            
-            # Create "image placeholder" icon with frame
-            painter.setPen(QPen(QColor(80, 80, 100), 1))
-            painter.setBrush(QBrush(QColor(52, 152, 219, 40)))  # Light blue with transparency
-            
-            # Convert floats to integers for the rect
-            frame_x = int(self.THUMB_WIDTH/4)
-            frame_y = int(self.THUMB_HEIGHT/4)
-            frame_width = int(self.THUMB_WIDTH/2)
-            frame_height = int(self.THUMB_HEIGHT/2)
-            painter.drawRoundedRect(frame_x, frame_y, frame_width, frame_height, 4, 4)
-            
-            # Add mountain icon for photos
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(52, 152, 219)))
-            
-            # Draw a stylized mountain
-            mountains = QPolygon([
-                QPoint(int(self.THUMB_WIDTH/4), int(self.THUMB_HEIGHT*3/4)),
-                QPoint(int(self.THUMB_WIDTH*3/8), int(self.THUMB_HEIGHT*2/4)),
-                QPoint(int(self.THUMB_WIDTH/2), int(self.THUMB_HEIGHT*2.5/4)),
-                QPoint(int(self.THUMB_WIDTH*5/8), int(self.THUMB_HEIGHT*1.5/4)),
-                QPoint(int(self.THUMB_WIDTH*3/4), int(self.THUMB_HEIGHT*2/4)),
-                QPoint(int(self.THUMB_WIDTH*3/4), int(self.THUMB_HEIGHT*3/4)),
-            ])
-            painter.drawPolygon(mountains)
-            
-            # Draw a sun
-            sun_x = int(self.THUMB_WIDTH*5/8)
-            sun_y = int(self.THUMB_HEIGHT/4)
-            sun_size = int(self.THUMB_WIDTH/8)
-            painter.setBrush(QBrush(QColor(241, 196, 15)))
-            painter.drawEllipse(sun_x, sun_y, sun_size, sun_size)
-            
-            # Draw format badge for all image files
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(41, 128, 185, 220)))
-            badge_x = self.THUMB_WIDTH - 40
-            badge_y = 10  # At top to avoid overlap with filename
-            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
-            
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-            badge_rect = QRect(badge_x, badge_y, 36, 16)
-            # Display extension without leading dot, uppercase
-            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
-            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
-            
+            # Orange for images
+            icon_color = QColor("#ff9e4a")  # Orange for images
+            icon_path = "icons:image-file.svg"
+            self.icon_label.setPixmap(self.get_colorized_svg(icon_path, icon_color, scaled_size))
         elif file_type == 'video':
-            # For video files
-            gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
-            gradient.setColorAt(0, QColor(40, 30, 30))
-            gradient.setColorAt(1, QColor(44, 34, 34))
-            painter.fillRect(2, 2, self.THUMB_WIDTH-4, self.THUMB_HEIGHT-4, gradient)
+            # Red for video
+            icon_color = QColor("#ff4a4a")  # Red for video
+            icon_path = "icons:video-file.svg"
+            self.icon_label.setPixmap(self.get_colorized_svg(icon_path, icon_color, scaled_size))
+        elif file_type == 'audio':
+            # Purple for audio - make the icon smaller to leave room for filename and extension
+            icon_color = QColor("#9c4aff")  # Purple for audio
+            # Change from using Qt resource system to direct file path
+            icon_path = "icons:audio-file.svg"
             
-            # Draw film strip borders
-            painter.setPen(QPen(QColor(231, 76, 60), 1))
-            for y in range(5, self.THUMB_HEIGHT-5, 12):
-                # Draw film strip holes
-                painter.drawRect(5, y, 8, 6)
-                painter.drawRect(self.THUMB_WIDTH-13, y, 8, 6)
+            # Create a pixmap with background
+            pixmap = QPixmap(self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            pixmap.fill(Qt.GlobalColor.transparent)
             
-            # Draw play triangle
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            
+            # Draw a rounded rectangle background
+            painter.setPen(QPen(QColor(50, 50, 50), 1))
+            painter.setBrush(QBrush(QColor(40, 40, 40)))
+            painter.drawRoundedRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, 6, 6)
+            
+            # Use a reduced size for the SVG - 50% of original size
+            audio_icon_size = QSize(int(self.THUMB_WIDTH * 0.5), int(self.THUMB_HEIGHT * 0.5))
+            audio_svg = self.get_colorized_svg(icon_path, icon_color, audio_icon_size)
+            
+            # Center the smaller SVG in the background
+            x_offset = (self.THUMB_WIDTH - audio_icon_size.width()) // 2
+            y_offset = (self.THUMB_HEIGHT - audio_icon_size.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, audio_svg)
+            
+            # Add format badge in top-right for audio files
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(231, 76, 60, 200))
-            
-            # Define center coordinates and play button size
-            center_x = self.THUMB_WIDTH // 2
-            center_y = self.THUMB_HEIGHT // 2
-            play_size = min(self.THUMB_WIDTH, self.THUMB_HEIGHT) // 3
-            
-            # Create play button triangle
-            play_triangle = QPolygon([
-                QPoint(self.THUMB_WIDTH // 2 - 15, self.THUMB_HEIGHT // 2 - 15),
-                QPoint(self.THUMB_WIDTH // 2 + 15, self.THUMB_HEIGHT // 2),
-                QPoint(self.THUMB_WIDTH // 2 - 15, self.THUMB_HEIGHT // 2 + 15)
-            ])
-            painter.drawPolygon(play_triangle)
-            
-            # Add circular border around play button
-            painter.setPen(QPen(QColor(231, 76, 60, 150), 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(center_x - play_size*2//3, center_y - play_size*2//3, 
-                                play_size*4//3, play_size*4//3)
-                                
-            # Add film strip at bottom
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(231, 76, 60, 100)))
-            strip_y = self.THUMB_HEIGHT - 15
-            strip_height = 10
-            painter.drawRect(5, strip_y, self.THUMB_WIDTH - 10, strip_height)
-            
-            # Add film holes
-            painter.setBrush(QBrush(QColor(40, 30, 30)))
-            hole_width = 6
-            for x in range(10, self.THUMB_WIDTH - 10, 20):
-                painter.drawRect(x, strip_y + 2, hole_width, strip_height - 4)
-            
-            # Move format badge to top-right corner instead of bottom to avoid overlap with filename
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(192, 57, 43, 220)))
-            badge_x = self.THUMB_WIDTH - 40
-            badge_y = 10  # Moved to top instead of bottom
-            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+            painter.setBrush(QBrush(QColor(156, 74, 255, 220)))  # Purple with transparency
+            badge_width = 36
+            badge_height = 18
+            badge_x = self.THUMB_WIDTH - badge_width - 5
+            badge_y = 5
+            painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
             
             painter.setPen(QColor(255, 255, 255))
             painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-            badge_rect = QRect(badge_x, badge_y, 36, 16)
+            badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
             
             # Show extension in badge
             ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+            
+            painter.end()
+            self.icon_label.setPixmap(pixmap)
         else:
-            # For other files
-            gradient = QLinearGradient(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT)
-            gradient.setColorAt(0, QColor(30, 35, 30))
-            gradient.setColorAt(1, QColor(34, 39, 34))
-            painter.fillRect(2, 2, self.THUMB_WIDTH-4, self.THUMB_HEIGHT-4, gradient)
+            # For other files, use a generic icon
+            icon_color = QColor("#4a9eff")  # Blue for most files
+            icon_name = "📄"  # Default file icon
+            pixmap = QPixmap(self.THUMB_WIDTH, self.THUMB_HEIGHT)
+            pixmap.fill(Qt.GlobalColor.transparent)
             
-            # Draw document icon
-            painter.setPen(QPen(QColor(100, 100, 100), 1))
-            painter.setBrush(QBrush(QColor(60, 60, 60)))
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             
-            # Document shape
-            doc_x = self.THUMB_WIDTH//2 - 20
-            doc_y = self.THUMB_HEIGHT//2 - 25
-            doc_rect = QRect(doc_x, doc_y, 40, 50)
-            painter.drawRect(doc_rect)
+            # Draw a rounded rectangle background
+            painter.setPen(QPen(QColor(50, 50, 50), 1))
+            painter.setBrush(QBrush(QColor(40, 40, 40)))
+            painter.drawRoundedRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT, 6, 6)
             
-            # Document lines
-            painter.setPen(QPen(QColor(120, 120, 120), 1))
-            for y_offset in range(10, 40, 8):
-                painter.drawLine(
-                    doc_rect.left() + 5, 
-                    doc_rect.top() + y_offset,
-                    doc_rect.right() - 5, 
-                    doc_rect.top() + y_offset
-                )
+            # Draw icon
+            font = QFont()
+            font.setPointSize(self.THUMB_HEIGHT // 2)
+            painter.setFont(font)
+            painter.setPen(icon_color)
+            painter.drawText(QRect(0, 0, self.THUMB_WIDTH, self.THUMB_HEIGHT), Qt.AlignmentFlag.AlignCenter, icon_name)
             
-            # Draw extension badge for all other files (not just those with extensions)
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(80, 80, 80, 180)))
-            badge_x = self.THUMB_WIDTH - 40
-            badge_y = 10  # Move to top for consistency
-            painter.drawRoundedRect(badge_x, badge_y, 32, 16, 4, 4)
-            
-            painter.setPen(QColor(255, 255, 255))
-            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-            badge_rect = QRect(badge_x, badge_y, 32, 16)
-            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
-            if not ext:
-                ext_text = "FILE"
-            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
-            
-            # Draw secondary format indicator in the document
-            if ext:
+            # Draw overlay with file extension for non-standard files
+            if ext and not is_video and not is_audio and not is_document and ext not in ['jpg', 'jpeg', 'png', 'gif', 'bmp']:
+                # Bottom overlay rectangle
+                painter.setBrush(QBrush(QColor(0, 0, 0, 180)))
                 painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(QBrush(QColor(80, 80, 80, 180)))
-                badge_x = self.THUMB_WIDTH//2 - 16
-                badge_y = self.THUMB_HEIGHT//2 + 12
-                painter.drawRoundedRect(badge_x, badge_y, 32, 16, 4, 4)
-                    
-                painter.setPen(QColor(255, 255, 255))
-                painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-                badge_rect = QRect(badge_x, badge_y, 32, 16)
-                painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
-        
-        # Add subtle "loading" indicator at bottom
-        painter.setPen(QPen(QColor(255, 255, 255, 100), 1))
-        painter.setFont(QFont("Arial", 7))
-        loading_rect = QRect(0, self.THUMB_HEIGHT - 15, self.THUMB_WIDTH, 10)
-        painter.drawText(loading_rect, Qt.AlignmentFlag.AlignCenter, "Loading thumbnail...")
-        
-        painter.end()
-        
-        # Set the pixmap
-        self.icon_label.setPixmap(pixmap)
+                rect = QRect(0, self.THUMB_HEIGHT - self.THUMB_HEIGHT // 4, self.THUMB_WIDTH, self.THUMB_HEIGHT // 4)
+                painter.drawRect(rect)
+                
+                # File extension text
+                painter.setPen(QPen(QColor(255, 255, 255)))
+                font = QFont()
+                font.setPointSize(self.THUMB_HEIGHT // 6)
+                painter.setFont(font)
+                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, ext.upper())
+            
+            painter.end()
+            self.icon_label.setPixmap(pixmap)
     
     def _request_thumbnail(self):
         """Request thumbnail generation for the file."""
@@ -1244,6 +1399,40 @@ class FileIconItem(QWidget):
             logging.error(f"Error in direct thumbnail generation: {e}")
             # If all else fails, show a better fallback
             self._create_better_fallback()
+            
+    def get_colorized_svg(self, svg_path, color, size):
+        """Get a colorized SVG icon.
+        
+        Args:
+            svg_path: Path to the SVG file
+            color: QColor to apply to the SVG
+            size: Size for the resulting pixmap
+            
+        Returns:
+            QPixmap with the colorized SVG
+        """
+        from PyQt6.QtSvg import QSvgRenderer
+        
+        # Create a pixmap to render the SVG
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        # Create a painter to draw on the pixmap
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Create an SVG renderer
+        renderer = QSvgRenderer(svg_path)
+        
+        # Set the color for the SVG
+        painter.setPen(color)
+        painter.setBrush(color)
+        
+        # Render the SVG onto the pixmap
+        renderer.render(painter)
+        painter.end()
+        
+        return pixmap
     
     def _get_cache_key(self, file_path: str) -> str:
         """Generate a unique cache key for a file based on path and modification time."""
@@ -1443,7 +1632,7 @@ class FileIconsItem(QWidget):
         super().__init__(parent)
         self.file_info = file_info
         self.setup_ui()
-        
+    
     def setup_ui(self):
         """Set up the UI components."""
         layout = QVBoxLayout(self)
@@ -1516,6 +1705,40 @@ class FileIconsItem(QWidget):
             }
         """)
     
+    def get_colorized_svg(self, svg_path, color, size):
+        """Get a colorized SVG icon.
+        
+        Args:
+            svg_path: Path to the SVG file
+            color: QColor to apply to the SVG
+            size: Size for the resulting pixmap
+            
+        Returns:
+            QPixmap with the colorized SVG
+        """
+        from PyQt6.QtSvg import QSvgRenderer
+        
+        # Create a pixmap to render the SVG
+        pixmap = QPixmap(size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        
+        # Create a painter to draw on the pixmap
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Create an SVG renderer
+        renderer = QSvgRenderer(svg_path)
+        
+        # Set the color for the SVG
+        painter.setPen(color)
+        painter.setBrush(color)
+        
+        # Render the SVG onto the pixmap
+        renderer.render(painter)
+        painter.end()
+        
+        return pixmap
+    
     def _set_icon(self):
         """Set an icon based on file type."""
         # Create a background for the icon
@@ -1529,6 +1752,9 @@ class FileIconsItem(QWidget):
         filename = self.file_info['name']
         ext = os.path.splitext(filename)[1].lower()
         
+        # Define a scaled size for the SVG icon
+        scaled_size = QSize(self.ICON_WIDTH, self.ICON_HEIGHT)
+        
         # Draw a rounded rectangle background
         painter.setPen(QPen(QColor(50, 50, 50), 1))
         painter.setBrush(QBrush(QColor(40, 40, 40)))
@@ -1541,53 +1767,33 @@ class FileIconsItem(QWidget):
             gradient.setColorAt(1, QColor(34, 34, 44))
             painter.fillRect(2, 2, self.ICON_WIDTH-4, self.ICON_HEIGHT-4, gradient)
             
-            # Create "image placeholder" icon with frame
-            painter.setPen(QPen(QColor(80, 80, 100), 1))
-            painter.setBrush(QBrush(QColor(52, 152, 219, 40)))  # Light blue with transparency
+            # Use SVG icon for images
+            icon_color = QColor("#ff9e4a")  # Orange for images
+            icon_path = "icons:image-file.svg"
+            # Use a reduced size for a cleaner look
+            icon_size = QSize(int(self.ICON_WIDTH * 0.6), int(self.ICON_HEIGHT * 0.6))
+            svg_pixmap = self.get_colorized_svg(icon_path, icon_color, icon_size)
+            # Center the icon
+            x_offset = (self.ICON_WIDTH - icon_size.width()) // 2
+            y_offset = (self.ICON_HEIGHT - icon_size.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, svg_pixmap)
             
-            # Convert floats to integers for the rect
-            frame_x = int(self.ICON_WIDTH/4)
-            frame_y = int(self.ICON_HEIGHT/4)
-            frame_width = int(self.ICON_WIDTH/2)
-            frame_height = int(self.ICON_HEIGHT/2)
-            painter.drawRoundedRect(frame_x, frame_y, frame_width, frame_height, 4, 4)
-            
-            # Add mountain icon for photos
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(52, 152, 219)))
-            
-            # Draw a stylized mountain
-            mountains = QPolygon([
-                QPoint(int(self.ICON_WIDTH/4), int(self.ICON_HEIGHT*3/4)),
-                QPoint(int(self.ICON_WIDTH*3/8), int(self.ICON_HEIGHT*2/4)),
-                QPoint(int(self.ICON_WIDTH/2), int(self.ICON_HEIGHT*2.5/4)),
-                QPoint(int(self.ICON_WIDTH*5/8), int(self.ICON_HEIGHT*1.5/4)),
-                QPoint(int(self.ICON_WIDTH*3/4), int(self.ICON_HEIGHT*2/4)),
-                QPoint(int(self.ICON_WIDTH*3/4), int(self.ICON_HEIGHT*3/4)),
-            ])
-            painter.drawPolygon(mountains)
-            
-            # Draw a sun
-            sun_x = int(self.ICON_WIDTH*5/8)
-            sun_y = int(self.ICON_HEIGHT/4)
-            sun_size = int(self.ICON_WIDTH/8)
-            painter.setBrush(QBrush(QColor(241, 196, 15)))
-            painter.drawEllipse(sun_x, sun_y, sun_size, sun_size)
-            
-            # Draw format badge for all image files
+            # Draw format badge for image files
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(QColor(41, 128, 185, 220)))
-            badge_x = self.ICON_WIDTH - 40
-            badge_y = 10  # At top to avoid overlap with filename
-            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+            badge_width = 36
+            badge_height = 18
+            badge_x = self.ICON_WIDTH - badge_width - 5
+            badge_y = 5
+            painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
             
             painter.setPen(QColor(255, 255, 255))
             painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-            badge_rect = QRect(badge_x, badge_y, 36, 16)
-            # Display extension without leading dot, uppercase
+            badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
+            
+            # Show extension in badge
             ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
             painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
-            
         elif file_type == 'video':
             # For video files
             gradient = QLinearGradient(0, 0, self.ICON_WIDTH, self.ICON_HEIGHT)
@@ -1595,52 +1801,66 @@ class FileIconsItem(QWidget):
             gradient.setColorAt(1, QColor(44, 34, 34))
             painter.fillRect(2, 2, self.ICON_WIDTH-4, self.ICON_HEIGHT-4, gradient)
             
-            # Create "video placeholder" icon
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(231, 76, 60, 200)))  # Red with transparency
+            # Use SVG icon for videos
+            icon_color = QColor("#ff4a4a")  # Red for videos
+            icon_path = "icons:video-file.svg"
+            # Use a reduced size for a cleaner look
+            icon_size = QSize(int(self.ICON_WIDTH * 0.6), int(self.ICON_HEIGHT * 0.6))
+            svg_pixmap = self.get_colorized_svg(icon_path, icon_color, icon_size)
+            # Center the icon
+            x_offset = (self.ICON_WIDTH - icon_size.width()) // 2
+            y_offset = (self.ICON_HEIGHT - icon_size.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, svg_pixmap)
             
-            # Draw play button
-            center_x = self.ICON_WIDTH // 2
-            center_y = self.ICON_HEIGHT // 2
-            play_size = min(self.ICON_WIDTH, self.ICON_HEIGHT) // 3
-            
-            # Triangle play icon
-            play_triangle = QPolygon([
-                QPoint(center_x - play_size//2, center_y - play_size//2),
-                QPoint(center_x + play_size//2, center_y),
-                QPoint(center_x - play_size//2, center_y + play_size//2)
-            ])
-            painter.drawPolygon(play_triangle)
-            
-            # Add circular border around play button
-            painter.setPen(QPen(QColor(231, 76, 60, 150), 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(center_x - play_size*2//3, center_y - play_size*2//3, 
-                                play_size*4//3, play_size*4//3)
-                                
-            # Add film strip at bottom
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(231, 76, 60, 100)))
-            strip_y = self.ICON_HEIGHT - 15
-            strip_height = 10
-            painter.drawRect(5, strip_y, self.ICON_WIDTH - 10, strip_height)
-            
-            # Add film holes
-            painter.setBrush(QBrush(QColor(40, 30, 30)))
-            hole_width = 6
-            for x in range(10, self.ICON_WIDTH - 10, 20):
-                painter.drawRect(x, strip_y + 2, hole_width, strip_height - 4)
-            
-            # Move format badge to top-right corner instead of bottom to avoid overlap with filename
+            # Move format badge to top-right corner 
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(QColor(192, 57, 43, 220)))
-            badge_x = self.ICON_WIDTH - 40
-            badge_y = 10  # Moved to top instead of bottom
-            painter.drawRoundedRect(badge_x, badge_y, 36, 16, 8, 8)
+            badge_width = 36
+            badge_height = 18
+            badge_x = self.ICON_WIDTH - badge_width - 5
+            badge_y = 5  # Moved to top
+            painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
             
             painter.setPen(QColor(255, 255, 255))
             painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
-            badge_rect = QRect(badge_x, badge_y, 36, 16)
+            badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
+            
+            # Show extension in badge
+            ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
+        elif file_type == 'audio':
+            # Purple for audio - make the icon smaller to leave room for filename and extension
+            icon_color = QColor("#9c4aff")  # Purple for audio
+            # Change from using Qt resource system to direct file path
+            icon_path = "icons:audio-file.svg"
+            
+            # Create a gradient for audio background
+            gradient = QLinearGradient(0, 0, self.ICON_WIDTH, self.ICON_HEIGHT)
+            gradient.setColorAt(0, QColor(35, 30, 40))
+            gradient.setColorAt(1, QColor(39, 34, 44))
+            painter.fillRect(2, 2, self.ICON_WIDTH-4, self.ICON_HEIGHT-4, gradient)
+            
+            # Use a reduced size for the SVG - 50% of original size
+            audio_icon_size = QSize(int(self.ICON_WIDTH * 0.5), int(self.ICON_HEIGHT * 0.5))
+            audio_svg = self.get_colorized_svg(icon_path, icon_color, audio_icon_size)
+            
+            # Center the smaller SVG in the background
+            x_offset = (self.ICON_WIDTH - audio_icon_size.width()) // 2
+            y_offset = (self.ICON_HEIGHT - audio_icon_size.height()) // 2
+            painter.drawPixmap(x_offset, y_offset, audio_svg)
+            
+            # Add format badge in top-right for audio files
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(156, 74, 255, 220)))  # Purple with transparency
+            badge_width = 36
+            badge_height = 18
+            badge_x = self.ICON_WIDTH - badge_width - 5
+            badge_y = 5
+            painter.drawRoundedRect(badge_x, badge_y, badge_width, badge_height, 4, 4)
+            
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
+            badge_rect = QRect(badge_x, badge_y, badge_width, badge_height)
             
             # Show extension in badge
             ext_text = ext[1:].upper() if ext.startswith('.') else ext.upper()
@@ -1699,7 +1919,7 @@ class FileIconsItem(QWidget):
                 painter.setFont(QFont("Arial", 8, QFont.Weight.Bold))
                 badge_rect = QRect(badge_x, badge_y, 32, 16)
                 painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, ext_text)
-                
+        
         painter.end()
         
         # Set the pixmap
@@ -2148,11 +2368,13 @@ class FileListWidget(QWidget):
                         
                         status_parts = []
                         if 'image' in type_counts:
-                            status_parts.append(f"{type_counts['image']} photo{'s' if type_counts['image'] != 1 else ''}")
+                            status_parts.append(f"{type_counts['image']} photos")
                         if 'video' in type_counts:
-                            status_parts.append(f"{type_counts['video']} video{'s' if type_counts['video'] != 1 else ''}")
+                            status_parts.append(f"{type_counts['video']} videos")
+                        if 'audio' in type_counts:
+                            status_parts.append(f"{type_counts['audio']} audio files")
                         
-                        self.status_label.setText(f"{self.list_widget.count()} files found ({', '.join(status_parts)})")
+                        self.status_label.setText(f"{len(files)} files found ({', '.join(status_parts)})")
                     else:
                         self.status_label.setText(f"{self.list_widget.count()} files found")
                         
@@ -2459,6 +2681,8 @@ class FileListWidget(QWidget):
                 status_parts.append(f"{type_counts['image']} photos")
             if 'video' in type_counts:
                 status_parts.append(f"{type_counts['video']} videos")
+            if 'audio' in type_counts:
+                status_parts.append(f"{type_counts['audio']} audio files")
                 
             self.status_label.setText(f"{len(files)} files found ({', '.join(status_parts)})")
         

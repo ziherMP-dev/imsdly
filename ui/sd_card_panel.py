@@ -31,6 +31,7 @@ class SDCardPanel(QWidget):
         # Filter preferences (will be applied after UI setup)
         self.show_photos = settings.value("sd_card/show_photos", True, type=bool)
         self.show_videos = settings.value("sd_card/show_videos", True, type=bool)
+        self.show_audio = settings.value("sd_card/show_audio", True, type=bool)
         
         self._setup_ui()
         self._connect_signals()
@@ -51,7 +52,7 @@ class SDCardPanel(QWidget):
         
         # Create a fixed container for scan button and filter toggles
         left_controls = QWidget()
-        left_controls.setFixedWidth(300)  # Fixed width to prevent expanding
+        left_controls.setFixedWidth(400)  # Increased from 300 to 400 for more space
         left_layout = QHBoxLayout(left_controls)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
@@ -79,7 +80,7 @@ class SDCardPanel(QWidget):
         
         # Filter buttons
         filter_layout = QHBoxLayout()
-        filter_layout.setSpacing(0)
+        filter_layout.setSpacing(0)  # Increased from 0 to 10
         filter_layout.setContentsMargins(10, 0, 0, 0)  # Add left margin for spacing from scan button
         
         # Create button group for filter buttons (non-exclusive)
@@ -122,11 +123,13 @@ class SDCardPanel(QWidget):
         # Add label text
         photos_label = QLabel("Photos")
         photos_label.setStyleSheet("color: white;")
+        photos_label.setMinimumWidth(60)  # Ensure minimum width for label
         photos_layout.addWidget(photos_label)
         
         # Set custom widget as layout for button
         photos_widget = QWidget()
         photos_widget.setLayout(photos_layout)
+        photos_widget.setFixedWidth(80)  # Increased from 100 by 20%
         
         self.photos_toggle = photos_toggle
         self.photos_handle = photos_handle
@@ -140,11 +143,11 @@ class SDCardPanel(QWidget):
                 border: none;
             }
         """)
+        photos_container.setMinimumWidth(55)  # Increased from 110 by 20%
         
         photos_container_layout = QHBoxLayout(photos_container)
         photos_container_layout.setContentsMargins(6, 6, 6, 6)
         photos_container_layout.addWidget(photos_widget)
-        photos_container_layout.addStretch()
         
         # Add to filter layout
         filter_layout.addWidget(photos_container)
@@ -185,11 +188,13 @@ class SDCardPanel(QWidget):
         # Add label text
         videos_label = QLabel("Videos")
         videos_label.setStyleSheet("color: white;")
+        videos_label.setMinimumWidth(60)  # Ensure minimum width for label
         videos_layout.addWidget(videos_label)
         
         # Set custom widget as layout for button
         videos_widget = QWidget()
         videos_widget.setLayout(videos_layout)
+        videos_widget.setFixedWidth(80)  # Increased from 100 by 20%
         
         self.videos_toggle = videos_toggle
         self.videos_handle = videos_handle
@@ -203,22 +208,89 @@ class SDCardPanel(QWidget):
                 border: none;
             }
         """)
+        videos_container.setMinimumWidth(55)  # Increased from 110 by 20%
         
         videos_container_layout = QHBoxLayout(videos_container)
         videos_container_layout.setContentsMargins(6, 6, 6, 6)
         videos_container_layout.addWidget(videos_widget)
-        videos_container_layout.addStretch()
         
         # Add to filter layout
         filter_layout.addWidget(videos_container)
         
+        # Audio button with small toggle
+        self.audio_button = QPushButton()
+        self.audio_button.setCheckable(True)
+        self.audio_button.setChecked(True)  # Set as default
+        
+        audio_layout = QHBoxLayout()
+        audio_layout.setContentsMargins(8, 0, 8, 0)
+        audio_layout.setSpacing(6)
+        
+        # Create toggle switch widget
+        audio_toggle = QFrame()
+        audio_toggle.setFixedSize(28, 16)
+        audio_toggle.setStyleSheet("""
+            QFrame {
+                background-color: #0d6efd;
+                border-radius: 8px;
+                border: 1px solid #0d6efd;
+            }
+        """)
+        
+        # Create toggle handle
+        audio_handle = QFrame(audio_toggle)
+        audio_handle.setFixedSize(14, 14)
+        audio_handle.move(12, 1)
+        audio_handle.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border-radius: 7px;
+            }
+        """)
+        
+        audio_layout.addWidget(audio_toggle)
+        
+        # Add label text
+        audio_label = QLabel("Audio")
+        audio_label.setStyleSheet("color: white;")
+        audio_label.setMinimumWidth(60)  # Ensure minimum width for label
+        audio_layout.addWidget(audio_label)
+        
+        # Set custom widget as layout for button
+        audio_widget = QWidget()
+        audio_widget.setLayout(audio_layout)
+        audio_widget.setFixedWidth(80)  # Increased from 100 by 20%
+        
+        self.audio_toggle = audio_toggle
+        self.audio_handle = audio_handle
+        self.audio_label = audio_label
+        
+        # Create container widget with similar styling to previous buttons
+        audio_container = QFrame()
+        audio_container.setStyleSheet("""
+            QFrame {
+                background-color: transparent;
+                border: none;
+            }
+        """)
+        audio_container.setMinimumWidth(55)  # Increased from 110 by 20%
+        
+        audio_container_layout = QHBoxLayout(audio_container)
+        audio_container_layout.setContentsMargins(6, 6, 6, 6)
+        audio_container_layout.addWidget(audio_widget)
+        
+        # Add to filter layout
+        filter_layout.addWidget(audio_container)
+        
         # Setup filter buttons
         self.photos_container = photos_container
         self.videos_container = videos_container
+        self.audio_container = audio_container
         
         # Connect mouse events for toggle switches
         photos_container.mousePressEvent = lambda e: self._toggle_photos()
         videos_container.mousePressEvent = lambda e: self._toggle_videos()
+        audio_container.mousePressEvent = lambda e: self._toggle_audio()
         
         # Add filter layout to left controls
         left_layout.addLayout(filter_layout)
@@ -521,6 +593,34 @@ class SDCardPanel(QWidget):
         # Trigger the filter changed handler
         self._handle_filter_changed(self.videos_button)
 
+    def _toggle_audio(self):
+        """Toggle audio filter on/off."""
+        is_checked = not self.audio_button.isChecked()
+        self.audio_button.setChecked(is_checked)
+        
+        # Update toggle appearance
+        if is_checked:
+            self.audio_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #0d6efd;
+                    border-radius: 8px;
+                    border: 1px solid #0d6efd;
+                }
+            """)
+            self.audio_handle.move(12, 1)
+        else:
+            self.audio_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #444;
+                    border-radius: 8px;
+                    border: 1px solid #555;
+                }
+            """)
+            self.audio_handle.move(2, 1)
+        
+        # Trigger the filter changed handler
+        self._handle_filter_changed(self.audio_button)
+
     def _handle_filter_changed(self, button: QPushButton) -> None:
         """Handle filter button click.
         
@@ -528,7 +628,7 @@ class SDCardPanel(QWidget):
             button: The clicked filter button
         """
         # Update filter status label - only show "All Files" when both filters are OFF
-        if not self.photos_button.isChecked() and not self.videos_button.isChecked():
+        if not self.photos_button.isChecked() and not self.videos_button.isChecked() and not self.audio_button.isChecked():
             self.filter_status_label.setText("Showing: All Files")
         else:
             self.filter_status_label.setText("")
@@ -537,6 +637,7 @@ class SDCardPanel(QWidget):
         settings = QSettings("Imsdly", "SDCardImporter")
         settings.setValue("sd_card/show_photos", self.photos_button.isChecked())
         settings.setValue("sd_card/show_videos", self.videos_button.isChecked())
+        settings.setValue("sd_card/show_audio", self.audio_button.isChecked())
         
         if self.file_model and self.selected_card:
             # Get current filter settings
@@ -545,6 +646,8 @@ class SDCardPanel(QWidget):
                 file_types.append('image')
             if self.videos_button.isChecked():
                 file_types.append('video')
+            if self.audio_button.isChecked():
+                file_types.append('audio')
                 
             # Update the file list with the current filters
             self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
@@ -583,6 +686,8 @@ class SDCardPanel(QWidget):
                 file_types.append('image')
             if self.videos_button.isChecked():
                 file_types.append('video')
+            if self.audio_button.isChecked():
+                file_types.append('audio')
                 
             self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
             
@@ -616,6 +721,8 @@ class SDCardPanel(QWidget):
                 file_types.append('image')
             if self.videos_button.isChecked():
                 file_types.append('video')
+            if self.audio_button.isChecked():
+                file_types.append('audio')
                 
             self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
         
@@ -641,6 +748,8 @@ class SDCardPanel(QWidget):
                 file_types.append('image')
             if self.videos_button.isChecked():
                 file_types.append('video')
+            if self.audio_button.isChecked():
+                file_types.append('audio')
                 
             # If no filters are selected, scan for all files
             if not file_types:
@@ -676,7 +785,7 @@ class SDCardPanel(QWidget):
         self.file_model.sort_files(self.current_sort_key, self.current_sort_order)
         
         # Update file list widget with model, defaulting to media files
-        self.file_list.set_file_model(self.file_model, file_types=['image', 'video'])
+        self.file_list.set_file_model(self.file_model, file_types=['image', 'video', 'audio'])
         
         # Update toggle states to reflect current button states
         self._update_toggle_states()
@@ -737,17 +846,39 @@ class SDCardPanel(QWidget):
             """)
             self.videos_handle.move(2, 1)
         
+        # Update audio toggle
+        if self.audio_button.isChecked():
+            self.audio_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #0d6efd;
+                    border-radius: 8px;
+                    border: 1px solid #0d6efd;
+                }
+            """)
+            self.audio_handle.move(12, 1)
+        else:
+            self.audio_toggle.setStyleSheet("""
+                QFrame {
+                    background-color: #444;
+                    border-radius: 8px;
+                    border: 1px solid #555;
+                }
+            """)
+            self.audio_handle.move(2, 1)
+        
     def _update_filter_buttons(self) -> None:
         """Update the filter buttons based on the current file model."""
         if self.file_model:
             self.photos_button.setEnabled(True)
             self.videos_button.setEnabled(True)
+            self.audio_button.setEnabled(True)
         else:
             self.photos_button.setEnabled(False)
             self.videos_button.setEnabled(False)
+            self.audio_button.setEnabled(False)
         
         # Update filter status label - only show "All Files" when both filters are OFF
-        if not self.photos_button.isChecked() and not self.videos_button.isChecked():
+        if not self.photos_button.isChecked() and not self.videos_button.isChecked() and not self.audio_button.isChecked():
             self.filter_status_label.setText("Showing: All Files")
         else:
             self.filter_status_label.setText("")
@@ -758,6 +889,8 @@ class SDCardPanel(QWidget):
             file_types.append('image')
         if self.videos_button.isChecked():
             file_types.append('video')
+        if self.audio_button.isChecked():
+            file_types.append('audio')
             
         self.file_list.set_file_model(self.file_model, file_types=file_types if file_types else None)
         
@@ -791,4 +924,8 @@ class SDCardPanel(QWidget):
             
         # Update videos filter
         if self.videos_button.isChecked() != self.show_videos:
-            self._toggle_videos()  # This will toggle the current state 
+            self._toggle_videos()  # This will toggle the current state
+            
+        # Update audio filter
+        if self.audio_button.isChecked() != self.show_audio:
+            self._toggle_audio()  # This will toggle the current state 

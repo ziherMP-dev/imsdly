@@ -108,10 +108,20 @@ class FileSystemModel:
             '.f4v', '.f4p', '.f4a', '.f4b'
         ]
         
+        # Audio file extensions
+        audio_exts = [
+            '.mp3', '.wav', '.flac', '.aac', '.ogg', '.wma', '.m4a', '.aiff', '.alac',
+            '.ape', '.opus', '.mid', '.midi', '.amr', '.au', '.pcm', '.aif', '.aifc',
+            '.snd', '.voc', '.vox', '.ra', '.rm', '.3ga', '.ac3', '.dss', '.mpc',
+            '.wv', '.dts', '.gsm', '.tta', '.spx', '.mka'
+        ]
+        
         if ext in image_exts:
             return 'image'
         elif ext in video_exts:
             return 'video'
+        elif ext in audio_exts:
+            return 'audio'
         else:
             return 'other'
     
