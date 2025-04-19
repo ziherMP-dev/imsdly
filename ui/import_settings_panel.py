@@ -236,7 +236,7 @@ class ImportSettingsPanel(QWidget):
             "<li><b>{hh}</b> - Hour (2 digits)</li>"
             "<li><b>{mm}</b> - Minute (2 digits)</li>"
             "<li><b>{camera}</b> - Camera model from EXIF</li>"
-            "<li><b>{type}</b> - File type (image/video)</li>"
+            "<li><b>{type}</b> - File type (image/video/audio)</li>"
             "</ul>"
             "Example: <i>{YYYY}/{MM}/{DD}/{type}</i> → 2023/04/15/image/"
         )
@@ -388,7 +388,7 @@ class ImportSettingsPanel(QWidget):
             "• {seq} - Sequence number\n"
             "• {cam} - Camera model\n"
             "• {orig} - Original filename\n"
-            "• {type} - File type (image/video)"
+            "• {type} - File type (photo/video/audio)"
         )
         help_text.setStyleSheet("color: #999; font-size: 11px;")
         pattern_layout.addWidget(help_text)
@@ -478,12 +478,13 @@ class ImportSettingsPanel(QWidget):
         """)
         
         # Add some example data for the preview
-        self.rename_preview_table.setRowCount(5)
+        self.rename_preview_table.setRowCount(6)
         example_files = [
             ("IMG_0001.JPG", "20230415_001.jpg"),
             ("IMG_0002.JPG", "20230415_002.jpg"),
             ("IMG_0003.JPG", "20230415_003.jpg"),
             ("MOV_0001.MP4", "20230415_004.mp4"),
+            ("AUDIO_001.WAV", "20230415_005.wav"),
             ("IMG_0004.JPG", "20230416_001.jpg")
         ]
         
@@ -563,6 +564,7 @@ class ImportSettingsPanel(QWidget):
             {"filename": "IMG_0002.JPG", "date": "20230415", "camera": "Canon EOS R5"},
             {"filename": "IMG_0003.JPG", "date": "20230415", "camera": "Canon EOS R5"},
             {"filename": "MOV_0001.MP4", "date": "20230415", "camera": "Canon EOS R5"},
+            {"filename": "AUDIO_001.WAV", "date": "20230415", "camera": "Canon EOS R5"},
             {"filename": "IMG_0004.JPG", "date": "20230416", "camera": "Canon EOS R5"}
         ]
         
@@ -647,8 +649,13 @@ class ImportSettingsPanel(QWidget):
         # Get file extension
         ext = self._get_extension(filename)
         
-        # Get file type
-        file_type = "video" if ext.lower() in [".mp4", ".mov", ".avi"] else "image"
+        # Determine file type based on extension
+        if ext.lower() in [".mp4", ".mov", ".avi"]:
+            file_type = "video"
+        elif ext.lower() in [".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"]:
+            file_type = "audio"
+        else:
+            file_type = "photo"  # Default to photo for image files
         
         # Format the sequence number with the specified padding
         padded_seq = f"{seq_num:0{seq_digits}d}"
@@ -709,6 +716,7 @@ class ImportSettingsPanel(QWidget):
             {"filename": "IMG_0001.JPG", "date": "2023-04-15", "time": "10:30:00"},
             {"filename": "IMG_0002.JPG", "date": "2023-04-15", "time": "10:35:00"},
             {"filename": "MOV_0001.MP4", "date": "2023-04-15", "time": "11:00:00"},
+            {"filename": "AUDIO_001.WAV", "date": "2023-04-15", "time": "11:15:00"},
             {"filename": "IMG_0003.JPG", "date": "2023-04-16", "time": "09:15:00"}
         ]
         
@@ -1206,7 +1214,14 @@ class ImportSettingsPanel(QWidget):
         
         # Get file type based on extension
         file_ext = os.path.splitext(filename)[1].lower()
-        file_type = "video" if file_ext in ['.mp4', '.mov', '.avi'] else "image"
+        
+        # Determine file type based on extension
+        if file_ext in ['.mp4', '.mov', '.avi']:
+            file_type = "video"
+        elif file_ext in ['.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a']:
+            file_type = "audio"
+        else:
+            file_type = "photo"  # Default to photo for image files
         
         # Replace variables in format string
         result = format_str
