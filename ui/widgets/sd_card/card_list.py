@@ -28,15 +28,27 @@ class SDCardListItem(QFrame):
         """
         super().__init__(parent)
         self.card_info = card_info
+        self._is_selected = False
         self._setup_ui()
         logger.debug(f"Created SDCardListItem for {card_info.get('name', 'Unknown Card')}")
         
     def _setup_ui(self) -> None:
         """Set up the UI components."""
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setLineWidth(0)
+        # Create main layout with selection indicator
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
-        layout = QHBoxLayout()
+        # Blue selection indicator (visible only when selected)
+        self.selection_indicator = QFrame(self)
+        self.selection_indicator.setFixedWidth(3)
+        self.selection_indicator.setStyleSheet("background-color: #007bff;")
+        self.selection_indicator.hide()  # Hidden by default
+        main_layout.addWidget(self.selection_indicator)
+        
+        # Content container with some spacing from the indicator
+        content = QWidget()
+        layout = QHBoxLayout(content)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(8)
         
@@ -44,12 +56,7 @@ class SDCardListItem(QFrame):
         icon_label = QLabel()
         icon_label.setText("💾")
         icon_label.setFixedSize(16, 16)
-        icon_label.setStyleSheet("""
-            QLabel {
-                color: #4a9eff;
-                font-size: 14px;
-            }
-        """)
+        icon_label.setStyleSheet("color: #4a9eff; font-size: 14px;")
         layout.addWidget(icon_label)
         
         # Card info
@@ -77,56 +84,63 @@ class SDCardListItem(QFrame):
         layout.addLayout(info_layout)
         layout.addStretch()
         
-        self.setLayout(layout)
-        self.setFixedHeight(30)
+        main_layout.addWidget(content)
         
-        # Set the widget to accept mouse events
+        # Set fixed height for consistent sizing
+        self.setFixedHeight(36)
+        
+        # Setup for hover
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         
-        # Set the base style
-        self.setStyleSheet("""
-            QFrame {
-                background: transparent;
-                border: none;
-                border-radius: 4px;
-            }
-            QFrame:hover {
-                background: #2a2a2a;
-            }
-            QLabel {
-                background: transparent;
-            }
-        """)
+        # Apply initial style
+        self._update_style()
         
-    def enterEvent(self, event):
-        """Handle mouse enter event."""
-        logger.debug("Mouse entered SDCardListItem")
-        self.setStyleSheet("""
-            QFrame {
-                background: #2a2a2a;
-                border: none;
-                border-radius: 4px;
-            }
-            QLabel {
-                background: transparent;
-            }
-        """)
+    def set_selected(self, selected: bool) -> None:
+        """Set whether this item is selected."""
+        if self._is_selected == selected:
+            return
         
-    def leaveEvent(self, event):
-        """Handle mouse leave event."""
-        logger.debug("Mouse left SDCardListItem")
-        self.setStyleSheet("""
-            QFrame {
-                background: transparent;
-                border: none;
-                border-radius: 4px;
-            }
-            QLabel {
-                background: transparent;
-            }
-        """)
+        self._is_selected = selected
+        logger.debug(f"Setting card {self.card_info.get('name')} selection to {selected}")
         
+        # Show/hide selection indicator
+        self.selection_indicator.setVisible(selected)
+        
+        # Update the style
+        self._update_style()
+    
+    def _update_style(self) -> None:
+        """Update the widget style based on selection state."""
+        if self._is_selected:
+            # Selected style - darker background but NO blue border
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: #404040;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QLabel {
+                    background: transparent;
+                }
+            """)
+        else:
+            # Normal style with hover effect
+            self.setStyleSheet("""
+                QFrame {
+                    background-color: transparent;
+                    border: none;
+                    border-radius: 4px;
+                }
+                QFrame:hover {
+                    background-color: #2a2a2a;
+                }
+                QLabel {
+                    background: transparent;
+                }
+            """)
+    
     def mousePressEvent(self, event):
         """Handle mouse press events."""
         logger.debug("Mouse pressed on SDCardListItem")
@@ -240,8 +254,8 @@ class SDCardListWidget(QWidget):
         layout.addWidget(self.no_cards_label)
         self.no_cards_label.hide()
         
-        # Set fixed size for the widget
-        self.setFixedHeight(60)
+        # Set minimum height initially - will be dynamically updated
+        self.setMinimumHeight(60)
         self.setLayout(layout)
         
     def _connect_signals(self) -> None:
@@ -254,52 +268,96 @@ class SDCardListWidget(QWidget):
         
     def refresh_cards(self) -> None:
         """Manually refresh the card list."""
-        # Get current cards and update the list
+        # Get current cards
         cards = self.sd_detector.get_current_cards()
+        
+        # Debug what cards we got
+        logger.debug(f"Refreshing SD card list, found {len(cards)} cards:")
+        for i, card in enumerate(cards):
+            card_id = card.get("id") or card.get("path")
+            logger.debug(f"  Card {i+1}: {card.get('name')} (ID: {card_id})")
+        
+        # Update the list with these cards
         self.update_card_list(cards)
         
     def update_card_list(self, cards: List[Dict[str, Any]]) -> None:
         """
-        Update the displayed list of SD cards.
+        Update the list of SD cards displayed in the widget.
         
         Args:
-            cards: List of SD card information dictionaries
+            cards: List of dictionaries containing SD card information
         """
-        logger.debug(f"Updating card list with {len(cards)} cards")
-        # Clear existing widgets
+        # Remember the currently selected card path
+        selected_path = None
+        if self.selected_card:
+            selected_path = self.selected_card.get('path')
+        
+        # Clear existing widgets first
+        self._clear_layout()
+        self.items = []
+        
+        # Add card items
+        if not cards:
+            self._show_no_cards_message()
+            return
+            
+        for card_info in cards:
+            item = SDCardListItem(card_info)
+            item.clicked.connect(self._handle_item_click)
+            self.cards_layout.addWidget(item)
+            self.items.append(item)
+            
+            # Restore selection if this is the previously selected card
+            if selected_path and card_info.get('path') == selected_path:
+                item.set_selected(True)
+                self.selected_card = card_info
+        
+        # Dynamically resize based on number of cards
+        card_count = len(cards)
+        card_height = 38  # Each card is 36px tall + 2px spacing
+        total_padding = 8  # Top and bottom padding of the container
+        
+        if card_count <= 4:
+            # For 1-4 cards, show all cards without scrolling
+            new_height = card_count * card_height + total_padding
+            self.setFixedHeight(new_height)
+            logger.debug(f"Showing all {card_count} cards, height: {new_height}px")
+        else:
+            # For more than 4 cards, show 4 cards and enable scrolling
+            max_height = 4 * card_height + total_padding
+            self.setFixedHeight(max_height)
+            logger.debug(f"Showing 4 of {card_count} cards with scrolling, height: {max_height}px")
+            
+    def _clear_layout(self) -> None:
+        """Clear all items from the cards layout."""
         while self.cards_layout.count():
             item = self.cards_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         
-        if not cards:
-            scroll_area = self.findChild(QScrollArea)
-            if scroll_area:
-                scroll_area.hide()
-            self.no_cards_label.show()
-            return
-            
-        scroll_area = self.findChild(QScrollArea)
-        if scroll_area:
-            scroll_area.show()
+        # Hide the no cards message
         self.no_cards_label.hide()
         
-        for card in cards:
-            item = SDCardListItem(card)
-            item.clicked.connect(self._handle_item_click)
-            self.cards_layout.addWidget(item)
-            logger.debug(f"Added card item: {card.get('name', 'Unknown Card')}")
-            
-    def _handle_item_click(self, card_info: Dict[str, Any]) -> None:
-        """
-        Handle a click on a card item.
+    def _show_no_cards_message(self) -> None:
+        """Show a message when no cards are available."""
+        self.no_cards_label.show()
+        # Set a fixed height when empty
+        self.setFixedHeight(60)
         
-        Args:
-            card_info: Information about the clicked card
-        """
-        logger.debug(f"Card clicked: {card_info.get('name', 'Unknown Card')}")
-        self.selected_card = card_info
-        self.card_selected.emit(card_info)
+    def _handle_item_click(self, card_info: Dict[str, Any]) -> None:
+        """Handle when a card item is clicked."""
+        logger.debug(f"Card clicked: {card_info.get('name')}")
+        
+        # Deselect all items first
+        for item in self.findChildren(SDCardListItem):
+            item.set_selected(False)
+        
+        # Find and select the clicked item
+        sender = self.sender()
+        if isinstance(sender, SDCardListItem):
+            sender.set_selected(True)
+            self.selected_card = card_info
+            self.card_selected.emit(card_info)
         
     def get_selected_card(self) -> Optional[Dict[str, Any]]:
         """

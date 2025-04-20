@@ -1,263 +1,216 @@
 # Imsdly Landing Page Development Guide
 
 ## Overview
-This guide outlines the development of a landing page for Imsdly, a PyQt file transfer application currently in development (at step 10 of the ADG). The landing page will serve as the product's web presence, offering information about the application, user authentication, pricing details, newsletter signup, and community engagement.
+This guide outlines the structure, design principles, and key elements for developing the Imsdly landing page. Imsdly is a PyQt-based file transfer application designed to transfer media files from various external storage devices to computers with advanced organization features.
 
-## Tech Stack
-- **Frontend**: React with Next.js
-- **UI Components**: shadcn/ui
-- **Authentication**: Supabase Auth
-- **Database**: Supabase for user data and licenses
-- **Deployment**: Vercel
+## Design Principles
+- **Clean & Modern**: Use a minimalist approach with ample white space
+- **Clear Information Hierarchy**: Important information should be immediately visible
+- **Visual Appeal**: Use high-quality imagery and modern design trends
+- **Responsive Design**: Ensure the page looks great on all device sizes
+- **Intuitive Navigation**: Users should easily find what they're looking for
 
-## Phase 1: Setup & Basic Structure
+## Color Palette
+- **Primary Color**: Deep Blue (#1E88E5) - Representing reliability and data security
+- **Secondary Color**: Teal (#00ACC1) - For accents and call-to-action elements
+- **Neutral Colors**: 
+  - Light Gray (#F5F7FA) - For backgrounds
+  - Dark Gray (#424242) - For text
+  - White (#FFFFFF) - For cards and content backgrounds
 
-### Step 1: Project Setup
-1.1. Create a new Next.js project with TypeScript
-```bash
-npx create-next-app@latest imsdly-landing --typescript
-```
+## Typography
+- **Headings**: 'Poppins', sans-serif (Bold, 700)
+- **Body Text**: 'Inter', sans-serif (Regular, 400)
+- **Button Text**: 'Inter', sans-serif (Semibold, 600)
 
-1.2. Set up shadcn/ui
-```bash
-npx shadcn-ui@latest init
-```
+## Page Sections
 
-1.3. Configure Supabase
-- Create a Supabase project
-- Save API keys in .env.local
-```
-NEXT_PUBLIC_SUPABASE_URL=your-project-url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-```
+### 1. Hero Section
+- **Large Hero Image**: Show the app in action, transferring files from multiple devices
+- **Headline**: "Transfer Media Files from Any Device with Ease"
+- **Subheadline**: "The ultimate solution for photographers, videographers, and drone operators"
+- **Primary CTA Button**: "Download Free Trial" 
+- **Secondary CTA Button**: "Buy Now - $30 Lifetime License"
 
-1.4. Install additional dependencies
-```bash
-npm install @supabase/auth-helpers-nextjs @supabase/supabase-js react-hook-form zod @hookform/resolvers
-```
+### 2. Key Features Section
+Design as a three-column grid of feature cards with icons:
 
-## Phase 2: Components & Layout
+- **Universal Compatibility**
+  - Icon: Connected devices
+  - Text: "Works with all types of storage media including SD, microSD, CompactFlash, XQD, CFexpress, and external drives"
 
-### Step 2: Header & Navigation
-2.1. Create responsive navbar with:
-- Logo
-- Product link
-- Features link
-- Pricing link
-- Community link
-- Sign In / Sign Up buttons
+- **Simultaneous Transfers**
+  - Icon: Multiple transfer arrows
+  - Text: "Process files from multiple devices at once with intelligent queuing"
 
-2.2. Implement mobile navigation with hamburger menu
+- **Smart Organization**
+  - Icon: Organized folders
+  - Text: "Automatically organize your files by date or use custom metadata-based sorting"
 
-### Step 3: Hero Section
-3.1. Create an eye-catching hero section with:
-- Compelling headline about Imsdly
-- Subheading describing core purpose
-- Main CTA button ("Get Started" or "Join Beta")
-- Secondary CTA for more information
-- Application screenshot or illustration
+- **Batch Renaming**
+  - Icon: File rename
+  - Text: "Rename files in bulk with custom patterns and sequential numbering"
 
-3.2. Add subtle animation for visual engagement
+- **Verified Transfers**
+  - Icon: Checkmark shield
+  - Text: "Ensure data integrity with transfer verification and resume capability"
 
-### Step 4: Product Information
-4.1. Implement a features section highlighting core functionality:
-- SD card media transfer
-- Automatic card detection
-- File organization by date or custom structure
-- Batch file renaming
-- File filtering capabilities
+- **Intuitive Interface**
+  - Icon: User-friendly app
+  - Text: "Choose between list, icon, or thumbnail views with customizable settings"
 
-4.2. Create a "How It Works" section with step-by-step process
-- Step 1: Connect SD card
-- Step 2: Select files
-- Step 3: Choose destination and organization
-- Step 4: Transfer files
+### 3. How It Works Section
+Show a 3-step visual process with app screenshots:
+1. **Connect** - "Plug in your storage devices and Imsdly automatically detects them"
+2. **Select** - "Choose files with powerful filtering options and preview capabilities"
+3. **Transfer** - "Organize and transfer files with verification to prevent data loss"
 
-4.3. Add visual indicators showing current development progress (Step 10 of 17)
+### 4. Device Support Section
+Visual grid showing all supported storage types with icons and labels:
+- SD Card Family (SD, SDHC, SDXC, SDUC)
+- microSD Card Family (microSD, microSDHC, microSDXC, microSDUC)
+- CompactFlash Family (CF Type I/II, CFast, CFast 2.0)
+- XQD & CFexpress Cards
+- Other Memory Cards (Memory Stick, etc.)
+- USB Drives & External Storage
 
-## Phase 3: Authentication & User Management
+### 5. Pricing Section
+Single pricing card with clean design:
+- **Headline**: "Simple, One-Time Pricing"
+- **Price**: "$30"
+- **Subtitle**: "Lifetime License"
+- **What's Included**:
+  - ✓ All current features
+  - ✓ Free updates for life
+  - ✓ Use on up to 2 computers
+  - ✓ Email support
+- **CTA Button**: "Get Lifetime Access"
 
-### Step 5: Authentication Components
-5.1. Create sign-up form with Supabase Auth
-- Email field
-- Password field with strength indicator
-- Name fields
-- Agreement to terms and privacy policy
-- Sign-up button
+### 6. Sign Up/Sign In Section
+Two-column layout:
+- **Left Column**: 
+  - Sign Up form with:
+    - Email field
+    - Password field
+    - Confirm Password field
+    - Sign Up button
+  - Text: "Create an account to save your settings and sync between devices"
 
-5.2. Implement sign-in form
-- Email/username field
-- Password field
-- "Remember me" option
-- Forgot password link
-- Sign-in button
+- **Right Column**:
+  - Sign In form with:
+    - Email field
+    - Password field
+    - "Forgot Password?" link
+    - Sign In button
+  - Text: "Already have an account? Sign in to access your personal settings"
 
-5.3. Add social authentication options (Google, GitHub) if desired
+### 7. Newsletter Subscription Section
+- **Background**: Light gradient
+- **Headline**: "Stay Updated"
+- **Subheadline**: "Get the latest news, tips, and updates directly to your inbox"
+- **Form**: 
+  - Email input field
+  - Subscribe button
+- **Additional text**: "We respect your privacy. Unsubscribe anytime."
 
-### Step 6: User Dashboard (Protected Route)
-6.1. Create a basic dashboard layout for authenticated users
-- Sidebar navigation
-- Account details section
-- License management section
-- User preferences
+### 8. Footer Section
+- **Company Info**: Logo, copyright, legal links
+- **Resources**: Documentation, FAQs, Support
+- **Connect**: Social media icons
+- **Contact**: Email contact
 
-6.2. Implement Supabase RLS policies for secure data access
+## Interactive Elements
 
-### Step 7: License Management
-7.1. Create database tables for license management
-```sql
-CREATE TABLE licenses (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  user_id UUID REFERENCES auth.users(id) NOT NULL,
-  license_key TEXT UNIQUE NOT NULL,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  expires_at TIMESTAMP WITH TIME ZONE,
-  type TEXT NOT NULL,
-  status TEXT NOT NULL
-);
-```
+### Navigation
+- **Fixed-top navbar** with:
+  - Logo (left)
+  - Navigation links: Features, How It Works, Pricing, Support
+  - Sign In/Sign Up buttons (right)
 
-7.2. Build license creation and assignment functionality
-7.3. Implement license verification system
-7.4. Create admin interface for license management (optional)
+### Modal Windows
+Design the following modal windows:
+1. **Sign Up Modal**
+   - Fields: Name, Email, Password, Confirm Password
+   - Checkbox for terms acceptance
+   - Sign Up button
+   - Option to sign up with Google/Facebook
+   - Link to sign in instead
 
-## Phase 4: Pricing & Payment
+2. **Sign In Modal**
+   - Fields: Email, Password
+   - Remember me checkbox
+   - Forgot password link
+   - Sign In button
+   - Option to sign in with Google/Facebook
+   - Link to sign up instead
 
-### Step 8: Pricing Component
-8.1. Design pricing card components with:
-- Free tier (limited features)
-- Standard tier (full features)
-- Pro tier (advanced features)
+3. **Newsletter Confirmation Modal**
+   - Thank you message
+   - What to expect next
+   - Close button
 
-8.2. Include feature comparison table
+## Call-to-Action Buttons
+- **Primary CTA** (Download/Buy):
+  - Background: #1E88E5 (Primary Blue)
+  - Text: White
+  - Hover Effect: Slight darkening + subtle shadow increase
+  
+- **Secondary CTA** (Learn More, Sign Up):
+  - Background: White
+  - Border: #1E88E5 (Primary Blue)
+  - Text: #1E88E5 (Primary Blue)
+  - Hover Effect: Light blue background (#E3F2FD)
 
-8.3. Clearly mark features that are still in development
+## Mobile Considerations
+- Collapse navigation into hamburger menu
+- Stack columns vertically
+- Adjust font sizes for smaller screens
+- Ensure touch targets are at least 44x44px
+- Optimize images for faster loading
+- Consider a simplified hero section for mobile
 
-### Step 9: Payment Integration
-9.1. Set up Stripe integration for payment processing
-9.2. Create checkout flow
-9.3. Implement webhook for successful payments
-9.4. Set up license generation upon payment completion
+## Animation Guidelines
+Use subtle animations to enhance user experience:
+- **Scroll Animations**: Fade-in elements as user scrolls down
+- **Hover Effects**: Subtle scaling (1.03x) for clickable cards
+- **Button Interactions**: Slight depression effect when clicked
+- **Form Validation**: Smooth error messages and success indicators
 
-## Phase 5: Community & Engagement
+## Development Technologies
+- **Framework**: React.js or Vue.js recommended
+- **CSS Framework**: Tailwind CSS or Bootstrap 5
+- **Animation Library**: GSAP or AOS (Animate On Scroll)
+- **Form Handling**: Formik or React Hook Form (if using React)
+- **Authentication**: Firebase Authentication or Auth0
 
-### Step 10: Newsletter Signup
-10.1. Create newsletter component with:
-- Email input field
-- GDPR-compliant checkbox
-- Subscribe button
-- Benefits description
+## User Flow
+1. Visitor arrives on landing page
+2. Reviews features and benefits
+3. Either downloads free trial or proceeds to purchase
+4. Creates account during purchase process
+5. Receives confirmation email
+6. Can return and sign in to access download/license
 
-10.2. Connect to email service (Mailchimp, ConvertKit, etc.)
-10.3. Implement double opt-in flow
-10.4. Create confirmation and thank you UI
+## Analytics Setup
+Implement analytics to track:
+- Conversion rate (visitors to trial/purchase)
+- Time spent on page
+- Click-through rates on CTA buttons
+- Sign-up completion rate
+- Newsletter subscription rate
 
-### Step 11: Community Section
-11.1. Build community engagement section
-- GitHub repository link
-- Discord/Slack community invitation
-- Contribution guidelines
-- Development roadmap showing progress
+## SEO Recommendations
+- **Title**: "Imsdly - The Ultimate Media File Transfer Tool for Photographers & Videographers"
+- **Meta Description**: "Transfer media files from any storage device to your computer with Imsdly. Support for SD, microSD, CF, XQD, USB drives and more. One-time $30 license."
+- **Keywords**: file transfer, SD card import, media organization, photo import, video file management
+- **Alt Text**: Ensure all images have descriptive alt text
+- **Structured Data**: Implement Schema.org markup for software application
 
-11.2. Create a developer-focused "Get Involved" form
-- Skills/expertise fields
-- Areas of interest dropdown
-- Contact information
-- Message/proposal field
-
-11.3. Set up Supabase table to store community applications
-
-## Phase 6: Polish & Launch
-
-### Step 12: SEO & Performance
-12.1. Implement SEO best practices
-- Metadata for all pages
-- OpenGraph tags
-- Structured data
-- Sitemap generation
-
-12.2. Optimize performance
-- Implement image optimization
-- Add lazy loading for components
-- Audit and improve loading speed
-
-### Step 13: Legal & Compliance
-13.1. Create necessary legal pages
-- Terms of Service
-- Privacy Policy
-- Cookie Policy
-- GDPR compliance measures
-
-13.2. Implement cookie consent banner
-
-### Step 14: Testing & Deployment
-14.1. Conduct thorough testing
-- Cross-browser compatibility
-- Mobile responsiveness
-- Authentication flows
-- Payment processes
-
-14.2. Set up CI/CD pipeline with GitHub Actions
-14.3. Deploy to Vercel
-14.4. Configure custom domain and SSL
-
-## Content Guidelines
-
-### Product Description
-Focus on solving the specific pain points:
-- Disorganized media files
-- Time-consuming manual transfer
-- Inconsistent file naming
-- Difficulty finding specific files
-
-Example headline: "Streamline your media workflow with Imsdly"
-
-### Development Status Communication
-Be transparent about the current status:
-- "Currently in active development (Stage 10/17)"
-- "Join early for exclusive beta access"
-- "Help shape the future of Imsdly"
-
-### Pricing Strategy
-Consider a tiered approach:
-- **Early Adopter**: Discounted lifetime access
-- **Standard**: Regular price with all features
-- **Pro**: Premium features (future development)
-
-## Design Guidelines
-
-### Color Palette
-- Primary: #0078d7 (Blue)
-- Secondary: #333333 (Dark Gray)
-- Accent: #ff9900 (Orange)
-- Background: #f5f7fa (Light Gray)
-- Text: #222222 (Near Black)
-
-### Typography
-- Headings: Inter (Bold)
-- Body: Inter (Regular)
-- Code: JetBrains Mono
-
-### Visual Style
-- Clean, modern interface
-- Subtle animations for interactions
-- Dark/light mode toggle
-- Professional with slight tech aesthetic
-
-## Implementation Checklist
-
-- [ ] Next.js project setup
-- [ ] shadcn/ui components integration
-- [ ] Responsive layout implementation
-- [ ] Supabase auth integration
-- [ ] User dashboard creation
-- [ ] License management system
-- [ ] Pricing component
-- [ ] Payment processing
-- [ ] Newsletter signup
-- [ ] Community engagement section
-- [ ] SEO optimization
-- [ ] Legal compliance
-- [ ] Testing across devices
-- [ ] Deployment and monitoring 
+## Testing Checklist
+- Cross-browser compatibility (Chrome, Firefox, Safari, Edge)
+- Mobile responsiveness (iOS and Android)
+- Form validation and submission
+- Modal functionality
+- Payment processing
+- Account creation flow
+- Loading speed optimization

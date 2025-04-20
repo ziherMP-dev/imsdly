@@ -1,0 +1,34 @@
+Create a modern, responsive landing page for Imsdly - a file transfer app ' imsdly' with the following:
+
+1. Hero section: "Transfer Media Files from Any Device with Ease" + app screenshot
+   - CTA buttons: "Download Free Trial" and "Buy Now - $30 Lifetime License"
+
+2. Key features grid (6 cards with icons):
+   - Universal Compatibility (all storage types)
+   - Simultaneous Transfers (multiple devices)
+   - Smart Organization (by date/metadata)
+   - Batch Renaming
+   - Verified Transfers
+   - Intuitive Interface
+
+3. How It Works: 5-step process with screenshots
+   - Connect (auto-detection)
+   - Select (filtering options)
+   - Select where to save your files and how to organize them
+   - Rename files (optional)
+   - Transfer (verification)
+
+4. Device Support: Visual grid of supported storage types (SD/microSD families, flasdrives, SSDs etc.)
+
+5. Pricing: Single $30 lifetime license card
+   - All features
+   - Free updates for life
+   - Use on 1 computers
+   - Email support
+
+6. Account section: Sign up/sign in forms
+
+7. Newsletter subscription form
+
+Color scheme: Deep Blue (#1E88E5), Teal (#00ACC1), Light Gray backgrounds
+Typography: Poppins for headings, Inter for body text
