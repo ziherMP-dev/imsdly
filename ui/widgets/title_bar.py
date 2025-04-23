@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QLabel
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap, QFont
 from ..styles.dark_theme import (
     TOP_BAR_STYLE,
     VERSION_LABEL_STYLE,
@@ -21,7 +22,33 @@ class TitleBar(QFrame):
         # Create layout
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(6)  # Add some spacing between elements
+        
+        # Add logo
+        logo_label = QLabel()
+        try:
+            logo_pixmap = QPixmap("icons:imsdly_logo.png")
+            logo_pixmap = logo_pixmap.scaledToHeight(20, Qt.TransformationMode.SmoothTransformation)
+            logo_label.setPixmap(logo_pixmap)
+            logo_label.setFixedSize(20, 20)
+        except:
+            # Fallback if logo can't be loaded
+            logo_label.setText("📷")
+            logo_label.setStyleSheet("color: #007bff; font-size: 16px;")
+        
+        layout.addWidget(logo_label)
+        
+        # Add brand name
+        brand_label = QLabel("Imsdly")
+        brand_font = QFont()
+        brand_font.setBold(True)
+        brand_font.setPointSize(10)
+        brand_label.setFont(brand_font)
+        brand_label.setStyleSheet("color: #ffffff;")
+        layout.addWidget(brand_label)
+        
+        # Add some spacing between brand and version
+        layout.addSpacing(4)
         
         # Version label
         version_label = QLabel("v1.0.0")

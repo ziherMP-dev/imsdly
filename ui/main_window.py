@@ -1,11 +1,15 @@
 from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFrame, QStatusBar, QSizeGrip, QStackedWidget, QLabel, QPushButton
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QSettings
+from PyQt6.QtGui import QIcon
 from .widgets.title_bar import TitleBar
 from .widgets.side_bar import SideBar
+from .widgets.custom_splitter import CustomSplitter
 from .styles.dark_theme import MAIN_WINDOW_STYLE, CONTENT_AREA_STYLE
 from .sd_card_panel import SDCardPanel
 from .import_settings_panel import ImportSettingsPanel
+from .widgets.sd_card.card_list import SDCardListItem, SDCardListWidget
 import logging
+import json
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -15,7 +19,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.dragPos = None
+        self.settings = QSettings("Imsdly", "Imsdly")
         self.setup_ui()
+        
+        # Restore window geometry if available
+        self.restore_geometry()
         
     def setup_ui(self):
         """Set up the main window UI"""
@@ -41,9 +49,12 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
         
+        # Create a custom splitter for resizable sidebar
+        self.splitter = CustomSplitter(Qt.Orientation.Horizontal)
+        
         # Add sidebar
         self.sidebar = SideBar(self)
-        content_layout.addWidget(self.sidebar, stretch=0)
+        self.splitter.addWidget(self.sidebar)
         
         # Connect active panel changed signal
         self.sidebar.active_panel_changed.connect(self._handle_active_panel_changed)
@@ -51,7 +62,29 @@ class MainWindow(QMainWindow):
         # Main content area
         self.center_content = QFrame()
         self.center_content.setStyleSheet(CONTENT_AREA_STYLE)
-        content_layout.addWidget(self.center_content, stretch=1)
+        self.splitter.addWidget(self.center_content)
+        
+        # Set initial sizes for splitter
+        default_sidebar_width = 200
+        if self.settings.contains("splitter/sizes"):
+            try:
+                sizes = json.loads(self.settings.value("splitter/sizes"))
+                if len(sizes) == 2 and all(isinstance(size, int) for size in sizes):
+                    self.splitter.setSizes(sizes)
+                    logger.debug(f"Restored splitter sizes: {sizes}")
+                else:
+                    self.splitter.setSizes([default_sidebar_width, self.width() - default_sidebar_width])
+            except Exception as e:
+                logger.error(f"Error restoring splitter sizes: {e}")
+                self.splitter.setSizes([default_sidebar_width, self.width() - default_sidebar_width])
+        else:
+            self.splitter.setSizes([default_sidebar_width, self.width() - default_sidebar_width])
+        
+        # Connect splitter moved signal to save sizes
+        self.splitter.splitterMoved.connect(self.save_splitter_sizes)
+        
+        # Add splitter to content layout
+        content_layout.addWidget(self.splitter)
         
         # Create stacked widget for content pages
         self.stacked_widget = QStackedWidget()
@@ -169,6 +202,11 @@ class MainWindow(QMainWindow):
             self.sidebar.sd_card_list.sd_detector.card_inserted.connect(self._handle_card_inserted)
             # Connect to card_removed signal to switch to no card view when needed
             self.sidebar.sd_card_list.sd_detector.card_removed.connect(self._handle_card_removed)
+        
+        # Restore splitter state if available
+        splitter_state = self.settings.value("splitter/state")
+        if splitter_state:
+            self.splitter.restoreState(splitter_state)
     
     def _handle_card_selected(self, card_info: dict) -> None:
         """
@@ -192,6 +230,14 @@ class MainWindow(QMainWindow):
         # Store as selected card in the list widget
         if hasattr(self.sidebar, 'sd_card_list'):
             self.sidebar.sd_card_list.selected_card = card_info
+            
+            # Ensure the card is visually selected in the list
+            # Find matching card item and select it
+            for item in self.sidebar.sd_card_list.findChildren(SDCardListItem):
+                if item.card_info.get('path') == card_info.get('path'):
+                    item.set_selected(True)
+                else:
+                    item.set_selected(False)
         
         # Log panel state
         logger.debug(f"SD card panel visible: {self.sd_card_panel.isVisible()}")
@@ -323,4 +369,37 @@ class MainWindow(QMainWindow):
             panel_name: Name of the active panel
         """
         # Implement the logic to handle active panel changed signal
-        pass 
+        pass
+
+    def save_splitter_sizes(self):
+        """Save the current splitter sizes when the splitter is moved."""
+        sizes = self.splitter.sizes()
+        self.settings.setValue("splitter/sizes", json.dumps(sizes))
+        logger.debug(f"Saved splitter sizes: {sizes}")
+
+    def restore_geometry(self):
+        """Restore window geometry from settings."""
+        if self.settings.contains("window/geometry"):
+            self.restoreGeometry(self.settings.value("window/geometry"))
+            logger.debug("Restored window geometry")
+        
+        # The splitter state is restored separately in setup_ui
+    
+    def save_geometry(self):
+        """Save window geometry to settings."""
+        self.settings.setValue("window/geometry", self.saveGeometry())
+        # Ensure splitter sizes are saved
+        self.save_splitter_sizes()
+        logger.debug("Saved window geometry and splitter sizes")
+
+    def resizeEvent(self, event):
+        """Handle resize events for the main window"""
+        super().resizeEvent(event)
+        # Save window geometry on resize
+        self.save_geometry()
+
+    def closeEvent(self, event):
+        """Handle close events for the main window"""
+        # Save window geometry and splitter sizes
+        self.save_geometry()
+        super().closeEvent(event) 

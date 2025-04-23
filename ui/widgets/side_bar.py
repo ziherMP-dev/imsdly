@@ -1,5 +1,6 @@
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QPushButton, QStyle, QWidget
+from PyQt6.QtWidgets import QFrame, QVBoxLayout, QPushButton, QStyle, QWidget, QLabel, QHBoxLayout
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QPixmap, QFont
 from ..styles.dark_theme import SIDEBAR_STYLE
 from .sd_card.card_list import SDCardListWidget
 from handlers.sd_card.detector import SDCardDetector
@@ -65,6 +66,43 @@ class SideBar(QFrame):
         # Log initial layout properties
         logger.debug(f"SideBar layout margins: {layout.contentsMargins()}")
         logger.debug(f"SideBar layout spacing: {layout.spacing()}")
+        
+        # Add brand header
+        brand_container = QFrame()
+        brand_container.setStyleSheet("""
+            background-color: #1a1a1a;
+            border-bottom: 1px solid #333;
+        """)
+        brand_container.setFixedHeight(60)
+        brand_layout = QHBoxLayout(brand_container)
+        brand_layout.setContentsMargins(16, 8, 16, 8)
+        
+        # Add logo
+        logo_label = QLabel()
+        try:
+            logo_pixmap = QPixmap("icons:imsdly_logo.png")
+            logo_pixmap = logo_pixmap.scaledToHeight(32, Qt.TransformationMode.SmoothTransformation)
+            logo_label.setPixmap(logo_pixmap)
+        except:
+            # Fallback if logo can't be loaded
+            logo_label.setText("📷")
+            logo_label.setStyleSheet("color: #007bff; font-size: 24px;")
+        
+        brand_layout.addWidget(logo_label)
+        
+        # Add brand name
+        brand_label = QLabel("Imsdly")
+        brand_font = QFont()
+        brand_font.setBold(True)
+        brand_font.setPointSize(14)
+        brand_label.setFont(brand_font)
+        brand_label.setStyleSheet("color: #ffffff;")
+        brand_layout.addWidget(brand_label)
+        
+        brand_layout.addStretch(1)
+        
+        # Add to main layout
+        layout.addWidget(brand_container)
         
         # Define buttons
         button_defs = [
@@ -179,4 +217,9 @@ class SideBar(QFrame):
             self.sd_card_list.setVisible(len(cards) > 0)
             # Log sizes after update
             logger.debug(f"SD Card list size after update: {self.sd_card_list.size()}")
-            logger.debug(f"SideBar size after update: {self.size()}") 
+            logger.debug(f"SideBar size after update: {self.size()}")
+
+    def start_monitoring(self):
+        """Start monitoring SD cards"""
+        if hasattr(self, 'sd_card_list'):
+            self.sd_card_list.sd_detector.start_monitoring() 

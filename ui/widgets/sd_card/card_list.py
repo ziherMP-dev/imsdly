@@ -300,6 +300,9 @@ class SDCardListWidget(QWidget):
         if not cards:
             self._show_no_cards_message()
             return
+        
+        # Flag to track if we've selected any card    
+        selection_made = False
             
         for card_info in cards:
             item = SDCardListItem(card_info)
@@ -311,6 +314,16 @@ class SDCardListWidget(QWidget):
             if selected_path and card_info.get('path') == selected_path:
                 item.set_selected(True)
                 self.selected_card = card_info
+                selection_made = True
+        
+        # If no card was selected and we have at least one card, select the first one
+        if not selection_made and cards:
+            first_item = self.items[0]
+            first_item.set_selected(True)
+            self.selected_card = cards[0]
+            # Emit the signal to inform other components that a card is selected
+            self.card_selected.emit(cards[0])
+            logger.debug(f"Auto-selected first card: {cards[0].get('name')}")
         
         # Dynamically resize based on number of cards
         card_count = len(cards)

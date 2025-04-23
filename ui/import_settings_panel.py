@@ -75,9 +75,9 @@ class ImportSettingsPanel(QWidget):
             if hasattr(self, 'basic_filename'):
                 self.basic_filename.textChanged.connect(self.handle_settings_changed)
                 
-            # Advanced settings signals
-            if hasattr(self, 'advanced_group'):
-                self.advanced_group.toggled.connect(self._handle_advanced_mode_toggled)
+            # Advanced settings signals - connect mode buttons
+            self.basic_mode_button.clicked.connect(lambda: self._handle_mode_button_clicked(True))
+            self.advanced_mode_button.clicked.connect(lambda: self._handle_mode_button_clicked(False))
                 
             # Advanced options signals
             self.pattern_input.textChanged.connect(self.handle_settings_changed)
@@ -320,13 +320,51 @@ class ImportSettingsPanel(QWidget):
         scroll_layout.setContentsMargins(0, 0, 0, 0)
         scroll_layout.setSpacing(15)
         
+        # Add vertical spacing before the "Keep original filenames" option
+        scroll_layout.addSpacing(10)
+        
+        # Add a top separator line before "Keep original filenames"
+        top_separator = QFrame()
+        top_separator.setFrameShape(QFrame.Shape.HLine)
+        top_separator.setFrameShadow(QFrame.Shadow.Sunken)
+        top_separator.setStyleSheet("background-color: #444;")
+        scroll_layout.addWidget(top_separator)
+        
+        # Add some more spacing after the top separator
+        scroll_layout.addSpacing(10)
+        
+        # Create a container widget for the "Keep original filenames" option
+        keep_original_container = QFrame()
+        keep_original_container.setObjectName("keepOriginalContainer")
+        keep_original_container.setCursor(Qt.CursorShape.PointingHandCursor)
+        keep_original_container.setStyleSheet("""
+            QFrame#keepOriginalContainer {
+                background-color: transparent;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QFrame#keepOriginalContainer:hover {
+                background-color: #2a2a2a;
+            }
+        """)
+        
         # Add option to keep original filenames (disable batch renaming)
-        keep_original_layout = QHBoxLayout()
+        keep_original_layout = QHBoxLayout(keep_original_container)
+        keep_original_layout.setContentsMargins(5, 5, 5, 5)
+        
         self.keep_original = QCheckBox("Keep original filenames (disable batch renaming)")
         self.keep_original.setStyleSheet("font-weight: bold;")
+        self.keep_original.setCursor(Qt.CursorShape.PointingHandCursor)
+        
         keep_original_layout.addWidget(self.keep_original)
         keep_original_layout.addStretch()
-        scroll_layout.addLayout(keep_original_layout)
+        
+        # Install event filter on the container to handle clicks
+        keep_original_container.installEventFilter(self)
+        
+        # Add container to scroll layout
+        scroll_layout.addWidget(keep_original_container)
+        self.keep_original_container = keep_original_container
         
         # Add a separator line
         separator1 = QFrame()
@@ -334,6 +372,66 @@ class ImportSettingsPanel(QWidget):
         separator1.setFrameShadow(QFrame.Shadow.Sunken)
         separator1.setStyleSheet("background-color: #444;")
         scroll_layout.addWidget(separator1)
+
+        # --- Create mode selection buttons ---
+        mode_selection_layout = QHBoxLayout()
+        mode_selection_layout.setSpacing(10)
+
+        # Basic mode button
+        self.basic_mode_button = QPushButton("Basic Settings")
+        self.basic_mode_button.setCheckable(True)
+        self.basic_mode_button.setChecked(True)
+        self.basic_mode_button.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: #ccc;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 3px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #0078d7;
+                color: white;
+            }
+            QPushButton:hover:!checked {
+                background-color: #444;
+            }
+        """)
+
+        # Advanced mode button
+        self.advanced_mode_button = QPushButton("Advanced Settings")
+        self.advanced_mode_button.setCheckable(True)
+        self.advanced_mode_button.setChecked(False)
+        self.advanced_mode_button.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: #ccc;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 3px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #0078d7;
+                color: white;
+            }
+            QPushButton:hover:!checked {
+                background-color: #444;
+            }
+        """)
+
+        # Add buttons to layout
+        mode_selection_layout.addWidget(self.basic_mode_button)
+        mode_selection_layout.addWidget(self.advanced_mode_button)
+        mode_selection_layout.addStretch()
+
+        # Connect the buttons to exclusive checking
+        self.basic_mode_button.clicked.connect(lambda: self._handle_mode_button_clicked(True))
+        self.advanced_mode_button.clicked.connect(lambda: self._handle_mode_button_clicked(False))
+        
+        # Add mode selection layout to main layout
+        scroll_layout.addLayout(mode_selection_layout)
         
         # --- Basic Settings Group ---
         basic_group = QGroupBox("Basic Settings")
@@ -366,8 +464,6 @@ class ImportSettingsPanel(QWidget):
         
         # --- Advanced Settings Group ---
         advanced_group = QGroupBox("Advanced Settings")
-        advanced_group.setCheckable(True)
-        advanced_group.setChecked(False)  # Initially collapsed
         advanced_layout = QVBoxLayout(advanced_group)
         
         # Rename Pattern Group (moved into advanced settings)
@@ -449,6 +545,9 @@ class ImportSettingsPanel(QWidget):
         scroll_layout.addWidget(advanced_group)
         self.advanced_group = advanced_group
         
+        # Hide advanced settings by default
+        self.advanced_group.setVisible(False)
+        
         # Preview Group
         preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout(preview_group)
@@ -503,7 +602,6 @@ class ImportSettingsPanel(QWidget):
         layout.addWidget(scroll_area)
         
         # Connect signals specific to this view
-        self.advanced_group.toggled.connect(self._handle_advanced_mode_toggled)
         self.basic_filename.textChanged.connect(self.handle_settings_changed)
         
         # Install event filters for toggling between basic and advanced settings
@@ -511,48 +609,212 @@ class ImportSettingsPanel(QWidget):
         
         return tab
     
+    def _handle_mode_button_clicked(self, basic_mode):
+        """Handle mode button clicks to toggle between basic and advanced modes"""
+        # If "Keep original filenames" is active, deactivate it
+        if hasattr(self, 'keep_original') and self.keep_original.isChecked():
+            self.keep_original.setChecked(False)
+            # This will trigger _handle_keep_original_changed which will update the UI
+        
+        # Ensure the buttons are properly checked/unchecked
+        self.basic_mode_button.setChecked(basic_mode)
+        self.advanced_mode_button.setChecked(not basic_mode)
+        
+        # Show/hide the appropriate settings group
+        self.basic_group.setVisible(basic_mode)
+        self.advanced_group.setVisible(not basic_mode)
+        
+        # Explicitly enable child widgets in the active group and disable in the inactive group
+        if basic_mode:
+            # Basic mode is active
+            self.basic_group.setEnabled(True)
+            for child in self.basic_group.findChildren(QWidget):
+                child.setEnabled(True)
+                
+            # Disable advanced options
+            self.pattern_group.setEnabled(False)
+            self.sequence_group.setEnabled(False)
+        else:
+            # Advanced mode is active
+            self.basic_group.setEnabled(False)
+            for child in self.basic_group.findChildren(QWidget):
+                child.setEnabled(False)
+                
+            # Enable advanced options
+            self.pattern_group.setEnabled(True)
+            self.sequence_group.setEnabled(True)
+            for child in self.pattern_group.findChildren(QWidget):
+                child.setEnabled(True)
+            for child in self.sequence_group.findChildren(QWidget):
+                child.setEnabled(True)
+        
+        # Update the UI
+        self._handle_advanced_mode_toggled(not basic_mode)
+        
     def _handle_keep_original_changed(self, state):
         """Handle the checkbox state change to enable/disable renaming options"""
         enabled = not bool(state)
         
-        # Enable/disable basic settings
-        if hasattr(self, 'basic_group'):
-            self.basic_group.setEnabled(enabled)
-            
-        # Enable/disable advanced settings
-        if hasattr(self, 'advanced_group'):
-            self.advanced_group.setEnabled(enabled)
+        # When "Keep original filenames" is checked, disable all rename settings
+        # When unchecked, re-enable based on current mode
+        advanced_mode = self.advanced_mode_button.isChecked()
         
-        # Enable/disable all advanced option groups
-        if hasattr(self, 'pattern_group'):
-            self.pattern_group.setEnabled(enabled)
-        if hasattr(self, 'sequence_group'):
-            self.sequence_group.setEnabled(enabled)
+        # Set style for mode selection buttons (but keep them enabled for clicking)
+        if hasattr(self, 'basic_mode_button'):
+            # Don't disable the buttons, but style them differently when "Keep original filenames" is active
+            if not enabled:
+                # Gray out button appearance, but keep them enabled
+                self.basic_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #777;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #444;
+                        color: #aaa;
+                    }
+                """)
+                self.advanced_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #777;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #444;
+                        color: #aaa;
+                    }
+                """)
+            else:
+                # Apply normal styling when enabled
+                self.basic_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #ccc;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:checked {
+                        background-color: #0078d7;
+                        color: white;
+                    }
+                    QPushButton:hover:!checked {
+                        background-color: #444;
+                    }
+                """)
+                self.advanced_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #ccc;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:checked {
+                        background-color: #0078d7;
+                        color: white;
+                    }
+                    QPushButton:hover:!checked {
+                        background-color: #444;
+                    }
+                """)
+        
+        # Update the visibility based on current mode
+        # Even when disabled, keep the correct panel visible
+        if hasattr(self, 'basic_group') and hasattr(self, 'advanced_group'):
+            self.basic_group.setVisible(not advanced_mode)
+            self.advanced_group.setVisible(advanced_mode)
+            
+            # Gray out both groups when "Keep original filenames" is checked
+            self.basic_group.setEnabled(enabled and not advanced_mode)
+            self.advanced_group.setEnabled(enabled)
+            
+            # Update styling to show disabled state
+            if not enabled:
+                self.basic_group.setStyleSheet("QGroupBox { color: #888; }")
+                self.advanced_group.setStyleSheet("QGroupBox { color: #888; }")
+                
+                # Also disable all child widgets within both groups
+                for child in self.basic_group.findChildren(QWidget):
+                    child.setEnabled(False)
+                
+                for child in self.advanced_group.findChildren(QWidget):
+                    child.setEnabled(False)
+            else:
+                # Otherwise, only enable children based on which mode is active
+                for child in self.basic_group.findChildren(QWidget):
+                    child.setEnabled(not advanced_mode)
+                
+                # When re-enabling, make sure advanced options are enabled only if advanced mode is active
+                self.pattern_group.setEnabled(advanced_mode)
+                self.sequence_group.setEnabled(advanced_mode)
+                
+                # Explicitly enable all children in advanced groups when advanced mode is active
+                if advanced_mode:
+                    for child in self.pattern_group.findChildren(QWidget):
+                        child.setEnabled(True)
+                    for child in self.sequence_group.findChildren(QWidget):
+                        child.setEnabled(True)
+        
+        # Update highlights based on which option is active
+        self._update_highlights(state)
         
         # Update preview table if "Keep original" is checked
         self.update_rename_preview()
         
         # Save settings
         self.handle_settings_changed()
-    
+            
     def _handle_advanced_mode_toggled(self, is_checked):
-        """Handle toggling of the advanced settings group."""
+        """Handle toggling of the advanced mode."""
         # Update the preview to reflect the change in rename mode
         self.update_rename_preview()
-        self.handle_settings_changed()
         
-        # Enable/disable basic settings based on advanced mode
+        # Skip further processing if "Keep original filenames" is checked
+        if hasattr(self, 'keep_original') and self.keep_original.isChecked():
+            return
+        
+        # Enable/disable the basic and advanced groups and their children
         if hasattr(self, 'basic_group'):
+            # When advanced mode is activated, disable basic group
             self.basic_group.setEnabled(not is_checked)
             
-            # Apply visual highlight based on which mode is active
+            # Also ensure all child widgets are properly enabled/disabled
+            for child in self.basic_group.findChildren(QWidget):
+                child.setEnabled(not is_checked)
+        
+        # Ensure pattern group and sequence group are enabled/disabled according to the advanced mode setting
+        if hasattr(self, 'pattern_group'):
+            self.pattern_group.setEnabled(is_checked)
+            # Also explicitly enable all child widgets
             if is_checked:
-                self.advanced_group.setStyleSheet("QGroupBox { border: 2px solid #0078d7; }")
-                self.basic_group.setStyleSheet("")
-            else:
-                self.basic_group.setStyleSheet("QGroupBox { border: 2px solid #0078d7; }")
-                self.advanced_group.setStyleSheet("")
-
+                for child in self.pattern_group.findChildren(QWidget):
+                    child.setEnabled(True)
+                
+        if hasattr(self, 'sequence_group'):
+            self.sequence_group.setEnabled(is_checked)
+            # Also explicitly enable all child widgets
+            if is_checked:
+                for child in self.sequence_group.findChildren(QWidget):
+                    child.setEnabled(True)
+        
+        # Update highlights based on active state
+        keep_original_active = hasattr(self, 'keep_original') and self.keep_original.isChecked()
+        self._update_highlights(keep_original_active)
+        
+        # Save settings
+        self.handle_settings_changed()
+        
     def update_rename_preview(self):
         """Update the rename preview table based on current settings."""
         if not hasattr(self, 'rename_preview_table'):
@@ -579,8 +841,8 @@ class ImportSettingsPanel(QWidget):
                 self.rename_preview_table.setItem(row, 1, QTableWidgetItem(orig))
             return
             
-        # Check if we're using basic mode (advanced settings off)
-        using_basic_mode = hasattr(self, 'advanced_group') and not self.advanced_group.isChecked()
+        # Check if we're using basic mode based on the active button
+        using_basic_mode = self.basic_mode_button.isChecked()
         
         if using_basic_mode and hasattr(self, 'basic_filename'):
             # Basic mode - use the basic filename pattern with automatic sequencing
@@ -921,28 +1183,119 @@ class ImportSettingsPanel(QWidget):
         if hasattr(self, 'keep_original'):
             # Keep original filenames
             keep_original = settings['keep_original_filenames'].lower() == 'true'
-            self.keep_original.setChecked(keep_original)
             
-            # Basic filename
+            # Advanced mode
+            advanced_mode = settings['advanced_mode'].lower() == 'true'
+            self.basic_mode_button.setChecked(not advanced_mode)
+            self.advanced_mode_button.setChecked(advanced_mode)
+            
+            # Set visibility based on mode
+            self.basic_group.setVisible(not advanced_mode)
+            self.advanced_group.setVisible(advanced_mode)
+            
+            # Style the mode buttons if keep_original is checked, but don't disable them
+            if keep_original:
+                # Gray out both buttons visually but keep them enabled
+                self.basic_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #777;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #444;
+                        color: #aaa;
+                    }
+                """)
+                self.advanced_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #777;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #444;
+                        color: #aaa;
+                    }
+                """)
+            else:
+                # Apply normal styling
+                self.basic_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #ccc;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:checked {
+                        background-color: #0078d7;
+                        color: white;
+                    }
+                    QPushButton:hover:!checked {
+                        background-color: #444;
+                    }
+                """)
+                self.advanced_mode_button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #333;
+                        color: #ccc;
+                        border: none;
+                        padding: 8px 15px;
+                        border-radius: 3px;
+                        font-weight: bold;
+                    }
+                    QPushButton:checked {
+                        background-color: #0078d7;
+                        color: white;
+                    }
+                    QPushButton:hover:!checked {
+                        background-color: #444;
+                    }
+                """)
+            
+            # Basic settings - should be disabled if advanced mode is active or keep_original is true
+            basic_group_enabled = not (advanced_mode or keep_original)
+            self.basic_group.setEnabled(basic_group_enabled)
+            
+            # Set text in basic filename
             if hasattr(self, 'basic_filename'):
                 self.basic_filename.setText(settings['basic_filename'])
-                
-            # Advanced mode
-            if hasattr(self, 'advanced_group'):
-                advanced_mode = settings['advanced_mode'].lower() == 'true'
-                self.advanced_group.setChecked(advanced_mode)
-                
-                # Also disable basic settings if advanced mode is active
-                if hasattr(self, 'basic_group'):
-                    self.basic_group.setEnabled(not advanced_mode)
+                # Make sure the text field is disabled if it should be
+                self.basic_filename.setEnabled(basic_group_enabled)
+            
+            # Enable/disable advanced settings
+            self.advanced_group.setEnabled(not keep_original)
+            
+            # If keep_original is true, disable all children in both groups
+            if keep_original:
+                for child in self.basic_group.findChildren(QWidget):
+                    child.setEnabled(False)
                     
-                    # Apply visual highlight based on which mode is active
-                    if advanced_mode:
-                        self.advanced_group.setStyleSheet("QGroupBox { border: 2px solid #0078d7; }")
-                        self.basic_group.setStyleSheet("")
-                    else:
-                        self.basic_group.setStyleSheet("QGroupBox { border: 2px solid #0078d7; }")
-                        self.advanced_group.setStyleSheet("")
+                for child in self.advanced_group.findChildren(QWidget):
+                    child.setEnabled(False)
+            else:
+                # Otherwise, only enable children based on which mode is active
+                for child in self.basic_group.findChildren(QWidget):
+                    child.setEnabled(not advanced_mode)
+                
+                # When re-enabling, make sure advanced options are enabled only if advanced mode is active
+                self.pattern_group.setEnabled(advanced_mode)
+                self.sequence_group.setEnabled(advanced_mode)
+                
+                # Explicitly enable all children in advanced groups when advanced mode is active
+                if advanced_mode:
+                    for child in self.pattern_group.findChildren(QWidget):
+                        child.setEnabled(True)
+                    for child in self.sequence_group.findChildren(QWidget):
+                        child.setEnabled(True)
             
             # Custom pattern
             self.pattern_input.setText(settings['rename_pattern_custom'])
@@ -954,6 +1307,12 @@ class ImportSettingsPanel(QWidget):
             # Reset options
             self.reset_by_folder.setChecked(settings['reset_by_folder'].lower() == 'true')
             self.reset_by_date.setChecked(settings['reset_by_date'].lower() == 'true')
+            
+            # Now set the "Keep original filenames" checkbox after configuring everything else
+            self.keep_original.setChecked(keep_original)
+            
+            # Apply visual highlights based on settings
+            self._update_highlights(keep_original)
         
         self.blockSignals(False)
     
@@ -988,8 +1347,8 @@ class ImportSettingsPanel(QWidget):
             if hasattr(self, 'basic_filename'):
                 settings['basic_filename'] = self.basic_filename.text()
                 
-            if hasattr(self, 'advanced_group'):
-                settings['advanced_mode'] = str(self.advanced_group.isChecked())
+            # Save which mode is active (basic or advanced)
+            settings['advanced_mode'] = str(self.advanced_mode_button.isChecked())
             
             # Advanced pattern settings
             settings['rename_pattern_custom'] = self.pattern_input.text()
@@ -1239,20 +1598,50 @@ class ImportSettingsPanel(QWidget):
         """Event filter to handle clicks on settings groups"""
         # Check if it's a mouse press event
         if event.type() == QEvent.Type.MouseButtonPress:
-            # Check if click was in basic settings area
-            if self._is_in_group(obj, self.basic_group):
-                # Only toggle if advanced is currently active
-                if self.advanced_group.isChecked():
-                    self.advanced_group.setChecked(False)
-                return False  # Allow event to propagate
+            # Check if clicking on the keep_original_container
+            if hasattr(self, 'keep_original_container') and obj == self.keep_original_container:
+                # Get the position of the click relative to the container
+                pos = event.position()
+                # Get the child widget at this position
+                child_widget = self.keep_original_container.childAt(int(pos.x()), int(pos.y()))
                 
-            # Check if click was in advanced settings area
-            elif self._is_in_group(obj, self.advanced_group):
-                # Only toggle if advanced is currently not active
-                if not self.advanced_group.isChecked():
-                    self.advanced_group.setChecked(True)
-                return False  # Allow event to propagate
+                # Only toggle if the click wasn't directly on the checkbox
+                # (let the checkbox handle its own clicks)
+                if child_widget != self.keep_original:
+                    # Toggle the checkbox
+                    self.keep_original.setChecked(not self.keep_original.isChecked())
+                    # Update UI based on new state
+                    self._handle_keep_original_changed(self.keep_original.isChecked())
+                    return True  # Event handled, don't propagate
+                return False  # Let checkbox handle its own clicks
+            
+            # If "Keep original filenames" is checked and user clicks on either Basic or Advanced Settings
+            # deactivate "Keep original filenames" and activate the clicked settings group
+            if hasattr(self, 'keep_original') and self.keep_original.isChecked():
+                # Check if click was in basic settings area
+                if self._is_in_group(obj, self.basic_group):
+                    # Deactivate "Keep original filenames"
+                    self.keep_original.setChecked(False)
+                    
+                    # Ensure basic settings is active and advanced is inactive
+                    self._handle_mode_button_clicked(True)  # Switch to basic mode
+                    
+                    # Update UI based on new states
+                    self._handle_keep_original_changed(False)
+                    return True  # Event handled
                 
+                # Check if click was in advanced settings area
+                elif self._is_in_group(obj, self.advanced_group):
+                    # Deactivate "Keep original filenames"
+                    self.keep_original.setChecked(False)
+                    
+                    # Ensure advanced settings is active and basic is inactive
+                    self._handle_mode_button_clicked(False)  # Switch to advanced mode
+                    
+                    # Update UI based on new states
+                    self._handle_keep_original_changed(False)
+                    return True  # Event handled
+            
         # For other events, just pass them through
         return super().eventFilter(obj, event)
     
@@ -1281,4 +1670,50 @@ class ImportSettingsPanel(QWidget):
         # Install on advanced group
         self.advanced_group.installEventFilter(self)
         for child in self.advanced_group.findChildren(QWidget):
-            child.installEventFilter(self) 
+            child.installEventFilter(self)
+        
+    def _update_highlights(self, keep_original_active):
+        """Update the highlights for all groups based on active state"""
+        # First reset all highlights
+        if keep_original_active:
+            # When "Keep original filenames" is active, use grayed out style for settings groups
+            self.basic_group.setStyleSheet("QGroupBox { color: #888; }")
+            self.advanced_group.setStyleSheet("QGroupBox { color: #888; }")
+        else:
+            # When "Keep original filenames" is inactive, clear styling first
+            self.basic_group.setStyleSheet("")
+            self.advanced_group.setStyleSheet("")
+            
+            # Then highlight either basic or advanced settings based on which is active
+            advanced_mode = self.advanced_mode_button.isChecked()
+            if advanced_mode:
+                self.advanced_group.setStyleSheet("QGroupBox { border: 2px solid #0078d7; }")
+            else:
+                self.basic_group.setStyleSheet("QGroupBox { border: 2px solid #0078d7; }")
+                
+        # Always update the Keep original container highlight
+        if keep_original_active:
+            # Highlight the "Keep original filenames" container
+            self.keep_original_container.setStyleSheet("""
+                QFrame#keepOriginalContainer {
+                    background-color: transparent;
+                    border: 2px solid #0078d7;
+                    border-radius: 4px;
+                    padding: 5px;
+                }
+                QFrame#keepOriginalContainer:hover {
+                    background-color: #2a2a2a;
+                }
+            """)
+        else:
+            # Reset "Keep original filenames" container style
+            self.keep_original_container.setStyleSheet("""
+                QFrame#keepOriginalContainer {
+                    background-color: transparent;
+                    border-radius: 4px;
+                    padding: 5px;
+                }
+                QFrame#keepOriginalContainer:hover {
+                    background-color: #2a2a2a;
+                }
+            """) 
