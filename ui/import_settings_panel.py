@@ -61,8 +61,8 @@ class ImportSettingsPanel(QWidget):
     def _connect_signals(self):
         """Connect UI signals after UI is fully initialized."""
         # Connect signals for live updates
-        self.org_by_date.toggled.connect(self._handle_org_method_changed)
-        self.org_by_custom.toggled.connect(self._handle_org_method_changed)
+        self.org_by_date_btn.clicked.connect(lambda: self._handle_org_method_button_clicked(True))
+        self.org_by_custom_btn.clicked.connect(lambda: self._handle_org_method_button_clicked(False))
         self.date_format_combo.currentIndexChanged.connect(self.handle_settings_changed)
         self.custom_format_input.textChanged.connect(self._handle_custom_format_changed)
         self.extract_exif.toggled.connect(self.handle_settings_changed)
@@ -102,9 +102,13 @@ class ImportSettingsPanel(QWidget):
         # Create the batch rename tab
         batch_rename_tab = self.create_batch_rename_tab()
         
+        # Create the EXIF options tab
+        exif_options_tab = self.create_exif_options_tab()
+        
         # Add tabs to the tab widget
         self.tab_widget.addTab(folder_settings_tab, "Folder Settings")
         self.tab_widget.addTab(batch_rename_tab, "Batch Rename")
+        self.tab_widget.addTab(exif_options_tab, "EXIF Options")
         
         # Add tab widget to main layout
         main_layout.addWidget(self.tab_widget)
@@ -157,22 +161,73 @@ class ImportSettingsPanel(QWidget):
         organization_group = QGroupBox("Organization Method")
         organization_layout = QVBoxLayout(organization_group)
         
-        # Organization method options
-        self.org_method_group = QButtonGroup(self)
+        # Replace radio buttons with toggle buttons
+        org_method_container = QHBoxLayout()
+        org_method_container.setContentsMargins(0, 5, 0, 10)
         
-        # By date option
-        self.org_by_date = QRadioButton("Organize by Date")
-        self.org_by_date.setChecked(True)  # Default
-        self.org_method_group.addButton(self.org_by_date)
-        organization_layout.addWidget(self.org_by_date)
+        # Create toggle buttons for organization method
+        self.org_by_date_btn = QPushButton("By Date")
+        self.org_by_date_btn.setCheckable(True)
+        self.org_by_date_btn.setChecked(True)  # Default
+        self.org_by_date_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: #ccc;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 3px;
+                font-weight: bold;
+                min-width: 100px;
+            }
+            QPushButton:checked {
+                background-color: #0078d7;
+                color: white;
+            }
+            QPushButton:hover:!checked {
+                background-color: #444;
+            }
+        """)
         
-        # Date format options - simplified layout
+        self.org_by_custom_btn = QPushButton("Custom")
+        self.org_by_custom_btn.setCheckable(True)
+        self.org_by_custom_btn.setChecked(False)
+        self.org_by_custom_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #333;
+                color: #ccc;
+                border: none;
+                padding: 8px 15px;
+                border-radius: 3px;
+                font-weight: bold;
+                min-width: 100px;
+            }
+            QPushButton:checked {
+                background-color: #0078d7;
+                color: white;
+            }
+            QPushButton:hover:!checked {
+                background-color: #444;
+            }
+        """)
+        
+        # Add buttons to layout
+        org_method_container.addWidget(self.org_by_date_btn)
+        org_method_container.addWidget(self.org_by_custom_btn)
+        org_method_container.addStretch()
+        
+        # Connect button signals
+        self.org_by_date_btn.clicked.connect(lambda: self._handle_org_method_button_clicked(True))
+        self.org_by_custom_btn.clicked.connect(lambda: self._handle_org_method_button_clicked(False))
+        
+        organization_layout.addLayout(org_method_container)
+        
+        # --- Date Format Group ---
         date_format_container = QHBoxLayout()
         date_format_container.setContentsMargins(20, 5, 0, 10)
         
         # Create date format label
-        date_format_label = QLabel("Date Format:")
-        date_format_container.addWidget(date_format_label)
+        self.date_format_label = QLabel("Date Format:")
+        date_format_container.addWidget(self.date_format_label)
         
         # Create the combobox
         self.date_format_combo = QComboBox()
@@ -194,10 +249,10 @@ class ImportSettingsPanel(QWidget):
         date_format_container.addWidget(self.date_format_combo)
         
         # Create a dropdown button (like in SD card panel)
-        dropdown_button = QPushButton("↓")
-        dropdown_button.setFixedWidth(24)
-        dropdown_button.setToolTip("Show date format options")
-        dropdown_button.setStyleSheet("""
+        self.date_format_dropdown_button = QPushButton("↓")
+        self.date_format_dropdown_button.setFixedWidth(24)
+        self.date_format_dropdown_button.setToolTip("Show date format options")
+        self.date_format_dropdown_button.setStyleSheet("""
             QPushButton {
                 background-color: #333;
                 color: white;
@@ -210,24 +265,19 @@ class ImportSettingsPanel(QWidget):
                 background-color: #444;
             }
         """)
-        date_format_container.addWidget(dropdown_button)
+        date_format_container.addWidget(self.date_format_dropdown_button)
         
         # Connect the dropdown button to open the combo box popup
-        dropdown_button.clicked.connect(lambda: self.date_format_combo.showPopup())
+        self.date_format_dropdown_button.clicked.connect(lambda: self.date_format_combo.showPopup())
         
         # Add to main layout
         organization_layout.addLayout(date_format_container)
         
-        # Custom structure option
-        self.org_by_custom = QRadioButton("Custom Folder Structure")
-        self.org_method_group.addButton(self.org_by_custom)
-        organization_layout.addWidget(self.org_by_custom)
-        
-        # Custom structure editor
+        # --- Custom Format Group ---
         custom_format_layout = QVBoxLayout()
         custom_format_layout.setContentsMargins(20, 5, 0, 0)
         
-        custom_format_help = QLabel(
+        self.custom_format_help = QLabel(
             "Define a custom folder structure using the following variables:"
             "<ul>"
             "<li><b>{YYYY}</b> - Year (4 digits)</li>"
@@ -240,8 +290,8 @@ class ImportSettingsPanel(QWidget):
             "</ul>"
             "Example: <i>{YYYY}/{MM}/{DD}/{type}</i> → 2023/04/15/image/"
         )
-        custom_format_help.setWordWrap(True)
-        custom_format_layout.addWidget(custom_format_help)
+        self.custom_format_help.setWordWrap(True)
+        custom_format_layout.addWidget(self.custom_format_help)
         
         self.custom_format_input = QLineEdit()
         self.custom_format_input.setPlaceholderText("{YYYY}/{MM}/{DD}/{type}")
@@ -250,24 +300,6 @@ class ImportSettingsPanel(QWidget):
         organization_layout.addLayout(custom_format_layout)
         
         scroll_layout.addWidget(organization_group)
-        
-        # --- EXIF Options Group ---
-        exif_group = QGroupBox("EXIF Options")
-        exif_layout = QVBoxLayout(exif_group)
-        
-        self.extract_exif = QCheckBox("Extract and save EXIF metadata")
-        self.extract_exif.setChecked(True)
-        exif_layout.addWidget(self.extract_exif)
-        
-        exif_description = QLabel(
-            "When enabled, EXIF data (camera info, settings, GPS, etc.) will be "
-            "extracted from image files and preserved alongside the images."
-        )
-        exif_description.setWordWrap(True)
-        exif_description.setStyleSheet("color: #999; font-size: 11px;")
-        exif_layout.addWidget(exif_description)
-        
-        scroll_layout.addWidget(exif_group)
         
         # --- Preview Group ---
         preview_group = QGroupBox("Structure Preview")
@@ -606,6 +638,74 @@ class ImportSettingsPanel(QWidget):
         
         # Install event filters for toggling between basic and advanced settings
         self._install_event_filters()
+        
+        return tab
+    
+    def create_exif_options_tab(self):
+        """Create the EXIF options tab."""
+        tab = QWidget()
+        
+        # Create a scroll area to handle overflow
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        
+        # Create content widget for scroll area
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(15)
+        
+        # --- EXIF Options Group ---
+        exif_group = QGroupBox("EXIF Options")
+        exif_layout = QVBoxLayout(exif_group)
+        
+        self.extract_exif = QCheckBox("Extract and save EXIF metadata")
+        self.extract_exif.setChecked(True)
+        exif_layout.addWidget(self.extract_exif)
+        
+        exif_description = QLabel(
+            "When enabled, EXIF data (camera info, settings, GPS, etc.) will be "
+            "extracted from image files and preserved alongside the images."
+        )
+        exif_description.setWordWrap(True)
+        exif_description.setStyleSheet("color: #999; font-size: 11px;")
+        exif_layout.addWidget(exif_description)
+        
+        scroll_layout.addWidget(exif_group)
+        
+        # Add additional explanation about EXIF metadata
+        exif_info_group = QGroupBox("About EXIF Metadata")
+        exif_info_layout = QVBoxLayout(exif_info_group)
+        
+        exif_info_text = QLabel(
+            "EXIF (Exchangeable Image File Format) contains metadata embedded in image files "
+            "by digital cameras and other devices. This data can include:"
+            "<ul>"
+            "<li><b>Camera information:</b> Make, model, lens used</li>"
+            "<li><b>Settings:</b> Aperture, shutter speed, ISO, focal length</li>"
+            "<li><b>Date and time:</b> When the photo was taken</li>"
+            "<li><b>GPS coordinates:</b> Location where the photo was taken (if available)</li>"
+            "<li><b>Copyright info:</b> Author and rights information</li>"
+            "</ul>"
+            "When extracted, this data is saved in a sidecar file that accompanies your image, "
+            "allowing you to access this information even if the original file is modified."
+        )
+        exif_info_text.setWordWrap(True)
+        exif_info_layout.addWidget(exif_info_text)
+        
+        scroll_layout.addWidget(exif_info_group)
+        
+        # Add stretch to push content to the top
+        scroll_layout.addStretch()
+        
+        # Finalize scroll area
+        scroll_area.setWidget(scroll_content)
+        
+        # Create tab layout and add scroll area
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.addWidget(scroll_area)
         
         return tab
     
@@ -951,14 +1051,23 @@ class ImportSettingsPanel(QWidget):
     def update_ui_states(self):
         """Update UI states based on current selection."""
         # Handle organization method selection
-        date_selected = self.org_by_date.isChecked()
-        custom_selected = self.org_by_custom.isChecked()
+        date_selected = self.org_by_date_btn.isChecked()
+        custom_selected = self.org_by_custom_btn.isChecked()
         
-        # Enable date format options only if "By date" is selected
-        self.date_format_combo.setEnabled(date_selected)
-        
-        # Enable custom format options only if "Custom structure" is selected
-        self.custom_format_input.setEnabled(custom_selected)
+        # Show/hide sections based on selected method
+        # Date format container includes the label, combo box and dropdown button
+        if hasattr(self, 'date_format_label'):
+            self.date_format_label.setVisible(date_selected)
+        if hasattr(self, 'date_format_combo'):
+            self.date_format_combo.setVisible(date_selected)
+        if hasattr(self, 'date_format_dropdown_button'):
+            self.date_format_dropdown_button.setVisible(date_selected)
+            
+        # Custom format includes help text and input field
+        if hasattr(self, 'custom_format_help'):
+            self.custom_format_help.setVisible(custom_selected)
+        if hasattr(self, 'custom_format_input'):
+            self.custom_format_input.setVisible(custom_selected)
         
         # Update preview
         self.update_preview()
@@ -983,7 +1092,7 @@ class ImportSettingsPanel(QWidget):
         ]
         
         for file_info in example_files:
-            if self.org_by_date.isChecked():
+            if self.org_by_date_btn.isChecked():
                 # Get the date format
                 date_format = self.date_format_combo.currentData()
                 
@@ -1000,7 +1109,7 @@ class ImportSettingsPanel(QWidget):
                     # Add date-organized folder structure
                     self._add_folder_path(root, [date_str, file_info["filename"]])
                 
-            elif self.org_by_custom.isChecked():
+            elif self.org_by_custom_btn.isChecked():
                 # Get the custom format
                 custom_format = self.custom_format_input.text()
                 
@@ -1102,7 +1211,7 @@ class ImportSettingsPanel(QWidget):
     
     def get_organization_method(self):
         """Get the selected organization method."""
-        if self.org_by_date.isChecked():
+        if self.org_by_date_btn.isChecked():
             return self.ORG_BY_DATE
         else:
             return self.ORG_BY_CUSTOM
@@ -1161,8 +1270,16 @@ class ImportSettingsPanel(QWidget):
         
         # Organization method
         org_method = settings['organization_method']
-        self.org_by_date.setChecked(org_method == self.ORG_BY_DATE)
-        self.org_by_custom.setChecked(org_method == self.ORG_BY_CUSTOM)
+        self.org_by_date_btn.setChecked(org_method == self.ORG_BY_DATE)
+        self.org_by_custom_btn.setChecked(org_method == self.ORG_BY_CUSTOM)
+        
+        # Set visibility based on selected organization method
+        is_date_method = org_method == self.ORG_BY_DATE
+        self.date_format_label.setVisible(is_date_method)
+        self.date_format_combo.setVisible(is_date_method)
+        self.date_format_dropdown_button.setVisible(is_date_method)
+        self.custom_format_help.setVisible(not is_date_method)
+        self.custom_format_input.setVisible(not is_date_method)
         
         # Date format
         date_format = settings['date_format']
@@ -1183,6 +1300,11 @@ class ImportSettingsPanel(QWidget):
         if hasattr(self, 'keep_original'):
             # Keep original filenames
             keep_original = settings['keep_original_filenames'].lower() == 'true'
+            self.keep_original.setChecked(keep_original)
+            
+            # Basic filename
+            if hasattr(self, 'basic_filename'):
+                self.basic_filename.setText(settings['basic_filename'])
             
             # Advanced mode
             advanced_mode = settings['advanced_mode'].lower() == 'true'
@@ -1193,111 +1315,7 @@ class ImportSettingsPanel(QWidget):
             self.basic_group.setVisible(not advanced_mode)
             self.advanced_group.setVisible(advanced_mode)
             
-            # Style the mode buttons if keep_original is checked, but don't disable them
-            if keep_original:
-                # Gray out both buttons visually but keep them enabled
-                self.basic_mode_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #333;
-                        color: #777;
-                        border: none;
-                        padding: 8px 15px;
-                        border-radius: 3px;
-                        font-weight: bold;
-                    }
-                    QPushButton:hover {
-                        background-color: #444;
-                        color: #aaa;
-                    }
-                """)
-                self.advanced_mode_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #333;
-                        color: #777;
-                        border: none;
-                        padding: 8px 15px;
-                        border-radius: 3px;
-                        font-weight: bold;
-                    }
-                    QPushButton:hover {
-                        background-color: #444;
-                        color: #aaa;
-                    }
-                """)
-            else:
-                # Apply normal styling
-                self.basic_mode_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #333;
-                        color: #ccc;
-                        border: none;
-                        padding: 8px 15px;
-                        border-radius: 3px;
-                        font-weight: bold;
-                    }
-                    QPushButton:checked {
-                        background-color: #0078d7;
-                        color: white;
-                    }
-                    QPushButton:hover:!checked {
-                        background-color: #444;
-                    }
-                """)
-                self.advanced_mode_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #333;
-                        color: #ccc;
-                        border: none;
-                        padding: 8px 15px;
-                        border-radius: 3px;
-                        font-weight: bold;
-                    }
-                    QPushButton:checked {
-                        background-color: #0078d7;
-                        color: white;
-                    }
-                    QPushButton:hover:!checked {
-                        background-color: #444;
-                    }
-                """)
-            
-            # Basic settings - should be disabled if advanced mode is active or keep_original is true
-            basic_group_enabled = not (advanced_mode or keep_original)
-            self.basic_group.setEnabled(basic_group_enabled)
-            
-            # Set text in basic filename
-            if hasattr(self, 'basic_filename'):
-                self.basic_filename.setText(settings['basic_filename'])
-                # Make sure the text field is disabled if it should be
-                self.basic_filename.setEnabled(basic_group_enabled)
-            
-            # Enable/disable advanced settings
-            self.advanced_group.setEnabled(not keep_original)
-            
-            # If keep_original is true, disable all children in both groups
-            if keep_original:
-                for child in self.basic_group.findChildren(QWidget):
-                    child.setEnabled(False)
-                    
-                for child in self.advanced_group.findChildren(QWidget):
-                    child.setEnabled(False)
-            else:
-                # Otherwise, only enable children based on which mode is active
-                for child in self.basic_group.findChildren(QWidget):
-                    child.setEnabled(not advanced_mode)
-                
-                # When re-enabling, make sure advanced options are enabled only if advanced mode is active
-                self.pattern_group.setEnabled(advanced_mode)
-                self.sequence_group.setEnabled(advanced_mode)
-                
-                # Explicitly enable all children in advanced groups when advanced mode is active
-                if advanced_mode:
-                    for child in self.pattern_group.findChildren(QWidget):
-                        child.setEnabled(True)
-                    for child in self.sequence_group.findChildren(QWidget):
-                        child.setEnabled(True)
-            
-            # Custom pattern
+            # Pattern input
             self.pattern_input.setText(settings['rename_pattern_custom'])
             
             # Sequence settings
@@ -1308,64 +1326,48 @@ class ImportSettingsPanel(QWidget):
             self.reset_by_folder.setChecked(settings['reset_by_folder'].lower() == 'true')
             self.reset_by_date.setChecked(settings['reset_by_date'].lower() == 'true')
             
-            # Now set the "Keep original filenames" checkbox after configuring everything else
-            self.keep_original.setChecked(keep_original)
+            # Update UI based on keep_original state
+            self._handle_keep_original_changed(keep_original)
             
-            # Apply visual highlights based on settings
+            # Update highlights
             self._update_highlights(keep_original)
+            
+            # Update the rename preview
+            self.update_rename_preview()
+        
+        # Update the folder structure preview
+        self.update_preview()
         
         self.blockSignals(False)
     
-    def save_settings(self):
-        """Save settings to file."""
-        import configparser
-        
-        # Create config parser
-        config = configparser.ConfigParser()
-        
-        # Basic import settings
-        settings = {
-            'destination_folder': self.destination_path.text(),
-            'organization_method': self.get_organization_method(),
-            'date_format': self.date_format_combo.currentData(),
-            'custom_format': self.custom_format_input.text(),
-            'extract_exif': str(self.extract_exif.isChecked())
-        }
-        
-        # Add batch rename settings if UI elements exist
-        if hasattr(self, 'keep_original'):
-            # Add batch rename settings
-            settings.update({
-                'keep_original_filenames': str(self.keep_original.isChecked()),
-                'sequence_start': str(self.seq_start.value()),
-                'sequence_digits': str(self.seq_digits.value()),
-                'reset_by_folder': str(self.reset_by_folder.isChecked()),
-                'reset_by_date': str(self.reset_by_date.isChecked())
-            })
+    def _handle_org_method_button_clicked(self, date_selected):
+        """Handle when organization method toggle buttons are clicked."""
+        # Ensure only one button is checked at a time
+        if date_selected:
+            self.org_by_date_btn.setChecked(True)
+            self.org_by_custom_btn.setChecked(False)
             
-            # Basic and advanced settings
-            if hasattr(self, 'basic_filename'):
-                settings['basic_filename'] = self.basic_filename.text()
-                
-            # Save which mode is active (basic or advanced)
-            settings['advanced_mode'] = str(self.advanced_mode_button.isChecked())
+            # Show date format options, hide custom format
+            self.date_format_label.setVisible(True)
+            self.date_format_combo.setVisible(True)
+            self.date_format_dropdown_button.setVisible(True)
+            self.custom_format_help.setVisible(False)
+            self.custom_format_input.setVisible(False)
+        else:
+            self.org_by_date_btn.setChecked(False)
+            self.org_by_custom_btn.setChecked(True)
             
-            # Advanced pattern settings
-            settings['rename_pattern_custom'] = self.pattern_input.text()
-        
-        # Add settings to config
-        config['Import'] = settings
-        
-        # Write to file
-        with open(self.settings_file_path, 'w') as f:
-            config.write(f)
+            # Hide date format options, show custom format
+            self.date_format_label.setVisible(False)
+            self.date_format_combo.setVisible(False)
+            self.date_format_dropdown_button.setVisible(False)
+            self.custom_format_help.setVisible(True)
+            self.custom_format_input.setVisible(True)
             
-    def _handle_org_method_changed(self):
-        """Handle when organization method radio buttons are toggled."""
-        # First update UI states
+        # Update UI states
         self.update_ui_states()
         
-        # Then save settings
+        # Save settings
         self.save_settings()
         self.settings_changed.emit()
     
@@ -1375,7 +1377,7 @@ class ImportSettingsPanel(QWidget):
         self.save_settings()
         
         # Update preview if custom format is currently selected
-        if self.org_by_custom.isChecked():
+        if self.org_by_custom_btn.isChecked():
             self.update_preview()
             
         # Emit settings changed signal
@@ -1716,4 +1718,41 @@ class ImportSettingsPanel(QWidget):
                 QFrame#keepOriginalContainer:hover {
                     background-color: #2a2a2a;
                 }
-            """) 
+            """)
+
+    def save_settings(self):
+        """Save settings to file."""
+        import configparser
+        
+        # Create config parser
+        config = configparser.ConfigParser()
+        
+        # Basic import settings
+        settings = {
+            'destination_folder': self.destination_path.text(),
+            'organization_method': self.get_organization_method(),
+            'date_format': self.date_format_combo.currentData(),
+            'custom_format': self.custom_format_input.text(),
+            'extract_exif': str(self.extract_exif.isChecked())
+        }
+        
+        # Add batch rename settings if UI elements exist
+        if hasattr(self, 'keep_original'):
+            # Add batch rename settings
+            settings.update({
+                'keep_original_filenames': str(self.keep_original.isChecked()),
+                'basic_filename': self.basic_filename.text() if hasattr(self, 'basic_filename') else '',
+                'advanced_mode': str(self.advanced_mode_button.isChecked()),
+                'rename_pattern_custom': self.pattern_input.text(),
+                'sequence_start': str(self.seq_start.value()),
+                'sequence_digits': str(self.seq_digits.value()),
+                'reset_by_folder': str(self.reset_by_folder.isChecked()),
+                'reset_by_date': str(self.reset_by_date.isChecked())
+            })
+        
+        # Add settings to config
+        config['Import'] = settings
+        
+        # Write to file
+        with open(self.settings_file_path, 'w') as f:
+            config.write(f) 
